@@ -6,6 +6,7 @@
 #define RISCV_SIMU_UTILS_H
 #include <string>
 #include <cstdint>
+#include <vector>
 
 #pragma pack(push, 1)
 typedef struct {
@@ -50,6 +51,13 @@ typedef struct {
 } Elf32_Shdr;
 #pragma pack(pop)
 
+/* Print ELF file information. */
 void print_elf_info(const std::string& path);
+
+/* Load ELF to simulator memory. */
+void load_elf_to_mem(const std::string& path, std::vector<uint8_t>& mem, uint32_t base_addr);
+
+/* Get ".tohost" address for riscv isa test. */
+uint32_t get_tohost_addr(const std::string& path);
 
 #endif //RISCV_SIMU_UTILS_H

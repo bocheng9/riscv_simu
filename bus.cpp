@@ -3,10 +3,18 @@
 //
 
 #include "bus.h"
+#include "utils.h"
 
 /* Construct and initialize DRAM. */
-Dram::Dram(const uint32_t size) {
+Dram::Dram(const uint32_t base_addr, const uint32_t size) {
+    this->base_addr = base_addr;
+    this->size = size;
     mem.resize(size);
+}
+
+/* Load ELF to memory. */
+void Dram::load_elf(const std::string &path) {
+    load_elf_to_mem(path, mem, base_addr);
 }
 
 /* Read N bytes from DRAM. */
@@ -49,7 +57,7 @@ void Bus::write(const uint32_t addr, const uint32_t n_bytes, const uint32_t data
     for (const auto& [m_base, m_size, m_dev] : devices) {
         if (addr >= m_base && addr < m_base + m_size) {
             const uint32_t offset = addr - m_base;
-            return m_dev->write(offset, n_bytes, data);
+            m_dev->write(offset, n_bytes, data);
         }
     }
 }

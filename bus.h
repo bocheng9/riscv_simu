@@ -21,11 +21,17 @@ public:
 };
 
 class Dram: public Mmio {
-public:
+protected:
+    uint32_t base_addr;
+    uint32_t size;
+
     /* Memory. */
     std::vector<uint8_t> mem;
+public:
+    explicit Dram(uint32_t base_addr, uint32_t size);
 
-    explicit Dram(uint32_t size);
+    /* Load ELF to memory. */
+    void load_elf(const std::string& path);
 
     /* Read N bytes from DRAM. */
     uint32_t read(uint32_t addr, uint32_t n_bytes) override;

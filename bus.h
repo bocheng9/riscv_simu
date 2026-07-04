@@ -55,7 +55,7 @@ public:
     void map(uint32_t base_addr, uint32_t size, const std::shared_ptr<Mmio> &dev);
 
     /* Read memory. */
-    uint32_t read(uint32_t addr, uint32_t n_bytes) const;
+    [[nodiscard]] uint32_t read(uint32_t addr, uint32_t n_bytes) const;
 
     /* Write memory. */
     void write(uint32_t addr, uint32_t n_bytes, uint32_t data) const;

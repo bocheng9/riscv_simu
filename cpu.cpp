@@ -255,7 +255,7 @@ void Cpu::execute() {
                     if (funct7 == 0) {  // SRLI
                         if (rd != 0) reg[rd] = src1 >> (imm_i & 0x1f);
                     } else if (funct7 == 0x20) {  // SRAI
-                        if (rd != 0) reg[rd] = static_cast<int32_t>(src1) & (imm_i & 0x1f);
+                        if (rd != 0) reg[rd] = static_cast<int32_t>(src1) >> (imm_i & 0x1f);
                     } else throw Trap(2, inst);  // Illegal instruction.
                     break;
                 case 6:  // ORI
@@ -277,7 +277,7 @@ void Cpu::execute() {
                 const uint8_t n_bytes = 1 << (funct3 & 0x3);        // Get byte number.
                 const uint32_t addr = src1 + imm_i;                 // Get address.
                 const uint32_t data = bus->read(addr , n_bytes);    // Load data.
-                if (rd != 0) reg[rd] = funct3 & 0x4? data : sign_extend(data, n_bytes << 2);
+                if (rd != 0) reg[rd] = funct3 & 0x4? data : sign_extend(data, n_bytes << 3);
                 if (trace) {
                     op = n_bytes == 1? "lb" : n_bytes == 2? "lh" : "lw";
                     op += funct3 & 0x4? "u": "";
@@ -295,7 +295,7 @@ void Cpu::execute() {
                 if (trace) {
                     op = n_bytes == 1? "sb" : n_bytes == 2? "sh" : "sw";
                     printf("%08x: %08x \t %s %s, %d(%s) # %08x <- %08x\n",
-                        pc, inst, op.c_str(), REG[rd], static_cast<int32_t>(imm_s), REG[rs1], addr, src2);
+                        pc, inst, op.c_str(), REG[rs2], static_cast<int32_t>(imm_s), REG[rs1], addr, src2);
                 }
             } else throw Trap(2, inst);  // Illegal instruction.
             break;
@@ -340,13 +340,13 @@ void Cpu::execute() {
             next_pc = pc + imm_j;
             reg[rd] = pc + 4;
             if (trace) printf("%08x: %08x \t jal %s, %d # %08x\n",
-                pc, inst, REG[rd], static_cast<int32_t>(imm_j), reg[rd]);
+                pc, inst, REG[rd], static_cast<int32_t>(imm_j), next_pc);
             break;
         case 0x67:  // JALR
-            next_pc = src1 + imm_j;
+            next_pc = src1 + imm_i & ~1;
             reg[rd] = pc + 4;
             if (trace) printf("%08x: %08x \t jal %s, %d(%s) # %08x\n",
-                pc, inst, REG[rd], static_cast<int32_t>(imm_j), REG[rs1], reg[rd]);
+                pc, inst, REG[rd], static_cast<int32_t>(imm_j), REG[rs1], next_pc);
             break;
         case 0x37:  // LUI
             reg[rd] = imm_u;
@@ -366,10 +366,15 @@ void Cpu::execute() {
                         if (trace) printf("%08x: %08x \t ebreak\n", pc, inst);
                         throw Trap(3, pc);
                     case 0x30200073:  // MRET
-                        op = "mret";
+                        privilege = mstatus.bits.mpp;           // Privilege mode is changed to MPP.
+                        mstatus.bits.mie = mstatus.bits.mpie;   // MIE is set to MPIE.
+                        mstatus.bits.mpie = 1;                  // MPIE is set to 1.
+                        mstatus.bits.mpp = 0;                   // MPP is set to U-mode.
+                        next_pc = mepc & ~3;                    // PC is set to the value stored in mepc.
+                        if (trace) op = "mret";
                         break;
                     case 0x10200073:  // SRET
-                        op = "sret";
+                        if (trace) op = "sret";
                         break;
                     case 0x10500073:  // WFI
                         break;

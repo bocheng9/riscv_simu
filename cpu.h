@@ -147,11 +147,10 @@ inline std::map<uint16_t, std::string> CSR {
 
 
 inline uint32_t sign_extend(const uint32_t x, const uint8_t width) {
-    if (x & 1 << (width - 1)) {
+    if (x & 1 << (width - 1) && width < 32) {
         return x | 0xffffffff << width;
-    } else {
-        return x;
     }
+    return x;
 }
 
 #endif //RVSIMU_V3_CPU_H

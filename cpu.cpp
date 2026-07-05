@@ -152,12 +152,12 @@ void Cpu::execute() {
     // |        inst[31]        | inst[19:12] | inst[20] | inst[30:25] | inst[24:21] |     0    | J-immediate
     // ------------------------------------------------------------------------------------------------------
 
-    const uint32_t imm_i = sign_extend(inst >> 20 & 0xfff, 12);
-    const uint32_t imm_s = sign_extend(inst >> 7 & 0x1f | (inst >> 25 & 0x7f) << 5, 12);
-    const uint32_t imm_b = sign_extend((inst >> 8 & 0xf) << 1 | (inst >> 25 & 0x3f) << 5 |
+    const uint32_t imm_i = signed_extend(inst >> 20 & 0xfff, 12);
+    const uint32_t imm_s = signed_extend(inst >> 7 & 0x1f | (inst >> 25 & 0x7f) << 5, 12);
+    const uint32_t imm_b = signed_extend((inst >> 8 & 0xf) << 1 | (inst >> 25 & 0x3f) << 5 |
         (inst >> 7 & 0x1) << 11 | (inst >> 31 & 0x1) << 12, 13);
     const uint32_t imm_u = inst & 0xfffff000;
-    const uint32_t imm_j = sign_extend((inst >> 21 & 0x3ff) << 1 | (inst >> 20 & 0x1) << 11 |
+    const uint32_t imm_j = signed_extend((inst >> 21 & 0x3ff) << 1 | (inst >> 20 & 0x1) << 11 |
         (inst >> 12 & 0xff) << 12 | (inst >> 31 & 0x1) << 20, 21);
 
     /* STEP3: excute instruction. */
@@ -174,30 +174,48 @@ void Cpu::execute() {
                     } else if (funct7 == 0x20) {  // SUB
                         if (rd != 0) reg[rd] = src1 - src2;
                         if (trace) op = "sub";
+                    } else if (funct7 == 1) {  // MUL
+                        if (rd != 0) reg[rd] =
+                            signed_mul(static_cast<int32_t>(src1), static_cast<int32_t>(src2)) & 0xffffffff;
+                        if (trace) op = "mul";
                     } else throw Trap(2, inst);  // Illegal instruction.
                     break;
                 case 1:
                     if (funct7 == 0) {  // SLL
                         if (rd != 0) reg[rd] = src1 << (src2 & 0x1f);
                         if (trace) op = "sll";
+                    } else if (funct7 == 1) {  // MULH
+                        if (rd != 0) reg[rd] =
+                            signed_mul(static_cast<int32_t>(src1), static_cast<int32_t>(src2)) >> 32 & 0xffffffff;
+                        if (trace) op = "mulh";
                     } else throw Trap(2, inst);  // Illegal instruction.
                     break;
                 case 2:
                     if (funct7 == 0) {  // SLT
                         if (rd != 0) reg[rd] = static_cast<int32_t>(src1) < static_cast<int32_t>(src2) ? 1 : 0;
                         if (trace) op = "slt";
+                    } else if (funct7 == 1) {  // MULHSU
+                        if (rd != 0) reg[rd] = signed_mul(static_cast<int32_t>(src1), src2) >> 32 & 0xffffffff;
+                        if (trace) op = "mulhsu";
                     } else throw Trap(2, inst);  // Illegal instruction.
                     break;
                 case 3:
                     if (funct7 == 0) {  // SLTU
                         if (rd != 0) reg[rd] = src1 < src2 ? 1 : 0;
                         if (trace) op = "sltu";
+                    } else if (funct7 == 1) {  // MULHU
+                        if (rd != 0) reg[rd] =
+                            signed_mul(src1, src2) >> 32 & 0xffffffff;
+                        if (trace) op = "mulhu";
                     } else throw Trap(2, inst);  // Illegal instruction.
                     break;
                 case 4:
                     if (funct7 == 0) {  // XOR
                         if (rd != 0) reg[rd] = src1 ^ src2;
                         if (trace) op = "xor";
+                    } else if (funct7 == 1) {
+                        if (rd != 0) reg[rd] = signed_div(static_cast<int32_t>(src1), static_cast<int32_t>(src2));
+                        if (trace) op = "div";
                     } else throw Trap(2, inst);  // Illegal instruction.
                     break;
                 case 5:
@@ -207,18 +225,27 @@ void Cpu::execute() {
                     } else if (funct7 == 0x20) {  // SRA
                         if (rd != 0) reg[rd] = static_cast<int32_t>(src1) >> (src2 & 0x1f);
                         if (trace) op = "sra";
+                    } else if (funct7 == 1) {  // DIVU
+                        if (rd != 0) reg[rd] = signed_div(src1, src2);
+                        if (trace) op = "divu";
                     } else throw Trap(2, inst);
                     break;
                 case 6:
                     if (funct7 == 0) {  // OR
                         if (rd != 0) reg[rd] = src1 | src2;
                         if (trace) op = "or";
+                    } else if (funct7 == 1) {  // REM
+                        if (rd != 0) reg[rd] = signed_rem(static_cast<int32_t>(src1), static_cast<int32_t>(src2));
+                        if (trace) op = "rem";
                     } else throw Trap(2, inst);  // Illegal instruction.
                     break;
                 case 7:
                     if (funct7 == 0) {  // AND
                         if (rd != 0) reg[rd] = src1 & src2;
                         if (trace) op = "and";
+                    } else if (funct7 == 1) {  // REMU
+                        if (rd != 0) reg[rd] = signed_rem(src1, src2);
+                        if (trace) op = "remu";
                     } else throw Trap(2, inst);  // Illegal instruction.
                     break;
                 default:
@@ -277,7 +304,7 @@ void Cpu::execute() {
                 const uint8_t n_bytes = 1 << (funct3 & 0x3);        // Get byte number.
                 const uint32_t addr = src1 + imm_i;                 // Get address.
                 const uint32_t data = bus->read(addr , n_bytes);    // Load data.
-                if (rd != 0) reg[rd] = funct3 & 0x4? data : sign_extend(data, n_bytes << 3);
+                if (rd != 0) reg[rd] = funct3 & 0x4? data : signed_extend(data, n_bytes << 3);
                 if (trace) {
                     op = n_bytes == 1? "lb" : n_bytes == 2? "lh" : "lw";
                     op += funct3 & 0x4? "u": "";

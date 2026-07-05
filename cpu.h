@@ -146,11 +146,25 @@ inline std::map<uint16_t, std::string> CSR {
 };
 
 
-inline uint32_t sign_extend(const uint32_t x, const uint8_t width) {
+inline uint32_t signed_extend(const uint32_t x, const uint8_t width) {
     if (x & 1 << (width - 1) && width < 32) {
         return x | 0xffffffff << width;
     }
     return x;
+}
+
+inline uint64_t signed_mul(const int64_t x, const int64_t y) {
+    return static_cast<uint64_t>(x * y);
+}
+
+inline uint32_t signed_div(const int64_t x, const int64_t y) {
+    if (y == 0) return 0xffffffff;
+    return static_cast<uint32_t>(x / y);
+}
+
+inline uint32_t signed_rem(const int64_t x, const int64_t y) {
+    if (y == 0) return static_cast<uint32_t>(x);
+    return static_cast<uint32_t>(x % y);
 }
 
 #endif //RVSIMU_V3_CPU_H

@@ -63,6 +63,7 @@ protected:
     uint32_t mcycleh;
 
     /* Connection. */
+    bool reserve;
     Bus *bus;
 
     /* Execute one instruction at a time. */

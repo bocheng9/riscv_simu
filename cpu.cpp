@@ -24,6 +24,7 @@ Cpu::Cpu() {
     mcycleh = 0;
 
     /* Init BUS. */
+    reserve = false;
     bus = nullptr;
 
     /* Init others. */
@@ -251,8 +252,8 @@ void Cpu::execute() {
                 default:
                     throw Trap(2, inst);  // Illegal instruction.
             }
-            if (trace) printf("%08x: %08x \t %s %s, %s, %s # %08x\n",
-                pc, inst, op.c_str(), REG[rd], REG[rs1], REG[rs2], reg[rd]);
+            if (trace) printf("%08x: %08x \t %s %s, %s, %s\n",
+                pc, inst, op.c_str(), REG[rd], REG[rs1], REG[rs2]);
             break;
         case 0x13:  // I-type instructions.
             switch (funct3) {
@@ -281,8 +282,10 @@ void Cpu::execute() {
                 case 5:
                     if (funct7 == 0) {  // SRLI
                         if (rd != 0) reg[rd] = src1 >> (imm_i & 0x1f);
+                        if (trace) op = "srli";
                     } else if (funct7 == 0x20) {  // SRAI
                         if (rd != 0) reg[rd] = static_cast<int32_t>(src1) >> (imm_i & 0x1f);
+                        if (trace) op = "srai";
                     } else throw Trap(2, inst);  // Illegal instruction.
                     break;
                 case 6:  // ORI
@@ -296,8 +299,8 @@ void Cpu::execute() {
                 default:
                     throw Trap(2, inst);  // Illegal instruction.
             }
-            if (trace) printf("%08x: %08x \t %s %s, %s, %d # %08x\n",
-                pc, inst, op.c_str(), REG[rd], REG[rs1], static_cast<int32_t>(imm_i), reg[rd]);
+            if (trace) printf("%08x: %08x \t %s %s, %s, %d\n",
+                pc, inst, op.c_str(), REG[rd], REG[rs1], static_cast<int32_t>(imm_i));
             break;
         case 0x3: { // I-type instructions (LOAD)
             if ((funct3 & 3) != 3) {
@@ -377,11 +380,11 @@ void Cpu::execute() {
             break;
         case 0x37:  // LUI
             reg[rd] = imm_u;
-            if (trace) printf("%08x: %08x \t lui %s, %x # %08x\n", pc, inst, REG[rd], imm_i, reg[rd]);
+            if (trace) printf("%08x: %08x \t lui %s, %x\n", pc, inst, REG[rd], imm_u >> 12);
             break;
         case 0x17:  // AUIPC
             reg[rd] = pc + imm_u;
-            if (trace) printf("%08x: %08x \t auipc %s, %x # %08x\n", pc, inst, REG[rd], imm_u, reg[rd]);
+            if (trace) printf("%08x: %08x \t auipc %s, %x\n", pc, inst, REG[rd], imm_u >> 12);
             break;
         case 0x73: { // System instructions.
             if (funct3 == 0) {
@@ -404,6 +407,7 @@ void Cpu::execute() {
                         if (trace) op = "sret";
                         break;
                     case 0x10500073:  // WFI
+                        if (trace) op = "wfi";
                         break;
                     default:
                         throw Trap(2, inst);
@@ -412,7 +416,7 @@ void Cpu::execute() {
             } else {
                 uint16_t addr = imm_i & 0xfff;
                 uint32_t old_val = read_csr(addr);
-                uint32_t new_val = old_val;
+                uint32_t new_val;
                 switch (funct3) {
                     case 1:  // CSRRW
                         new_val = src1;
@@ -455,6 +459,81 @@ void Cpu::execute() {
             }
             break;
         }
+        case 0x2f:  // Atomic instructions.
+            if (funct3 == 2) {
+                uint8_t funct5 = funct7 >> 2;
+                if ((funct5 & 0x3) == 0) {
+                    uint32_t old_val = bus->read(src1, 4);
+                    uint32_t new_val;
+                    switch (funct5 >> 2) {
+                        case 0:  // AMOADD.W
+                            new_val = old_val + src2;
+                            if (trace) op = "amoadd.w";
+                            break;
+                        case 1: // AMOXOR.W
+                            new_val = old_val ^ src2;
+                            if (trace) op = "amoxor.w";
+                            break;
+                        case 2: // AMOOR.W
+                            new_val = old_val | src2;
+                            if (trace) op = "amoxor.w";
+                            break;
+                        case 3: // AMOADD.W
+                            new_val = old_val & src2;
+                            if (trace) op = "amoand.w";
+                            break;
+                        case 4: // AMOMIN.W
+                            new_val = static_cast<int32_t>(old_val) < static_cast<int32_t>(src2)? old_val : src2;
+                            if (trace) op = "amomin.w";
+                            break;
+                        case 5: // AMOMAX.W
+                            new_val = static_cast<int32_t>(old_val) > static_cast<int32_t>(src2)? old_val : src2;
+                            if (trace) op = "amomax.w";
+                            break;
+                        case 6: // AMOMINU.W
+                            new_val = old_val < src2? old_val : src2;
+                            if (trace) op = "amominu.w";
+                            break;
+                        case 7: // AMOMAXU.W
+                            new_val = old_val > src2? old_val : src2;
+                            if (trace) op = "amomaxu.w";
+                            break;
+                        default:
+                            throw Trap(2, inst);
+                    }
+                    bus->write(src1, 4, new_val);
+                    if (rd != 0) reg[rd] = old_val;
+                    if (trace) printf("%08x: %08x \t %s %s, %s, (%s)\n",
+                        pc, inst, op.c_str(), REG[rd], REG[rs2], REG[rs1]);
+                } else if (funct5 == 1) {  // AMOSWAP.W
+                    uint32_t old_val = bus->read(src1, 4);
+                    bus->write(src1, 4, src2);
+                    if (rd != 0) reg[rd] = old_val;
+                    if (trace) printf("%08x: %08x \t amoswap.w %s, %s, (%s)\n",
+                        pc, inst, REG[rd], REG[rs2], REG[rs1]);
+                } else if (funct5 == 2) {  // LR.W
+                    uint32_t old_val = bus->read(src1, 4);
+                    if (rd != 0) reg[rd] = old_val;
+                    if (!reserve) reserve = true;
+                    if (trace) printf("%08x: %08x \t lr.w %s, %s, (%s)\n",
+                        pc, inst, REG[rd], REG[rs2], REG[rs1]);
+                } else if (funct5 == 3) {  // SC.W
+                    if (reserve) {
+                        bus->write(src1, 4, src2);
+                        reg[rd] = 0;
+                        reserve = false;
+                    } else {
+                        reg[rd] = 1;
+                    }
+                    if (trace) printf("%08x: %08x \t sc.w %s, %s, (%s)\n",
+                        pc, inst, REG[rd], REG[rs2], REG[rs1]);
+                } else {
+                    throw Trap(2, inst);
+                }
+            } else {
+                throw Trap(2, inst);
+            }
+            break;
         case 0xf:
             if (funct3 == 0) {
                 op = "fence";

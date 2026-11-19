@@ -313,6 +313,21 @@ void Cpu::write_mem(const uint32_t addr, const uint32_t n_bytes, const uint32_t 
 
 
 void Cpu::execute() {
+    /* STEP0: 中断检查（在指令执行前，mepc = 当前 pc 即下一条待执行指令）*/
+    {
+        const uint32_t pending = mip & mie;
+        if (pending != 0) {
+            uint32_t cause = 0;
+            for (uint32_t b = 0; b < 32; b++) {
+                if (pending & (1u << b)) { cause = b; break; }
+            }
+            bool take = false;
+            if (privilege <= 1 && mstatus.bits.sie && ((mideleg >> cause) & 1)) take = true;
+            if (privilege == 3 && mstatus.bits.mie) take = true;
+            if (take) throw Trap(0x80000000u | cause, 0);
+        }
+    }
+
 
     /* STEP1: fetch instruction. */
     const uint32_t inst = read_mem(pc, 4, FETCH);
@@ -772,6 +787,7 @@ void Cpu::execute() {
     /* STEP5: update PC. */
     pc = next_pc;
     reg[0] = 0; // Reset zero.
+
 }
 
 void Cpu::handle_exception(const Trap& trap) {
@@ -803,7 +819,10 @@ void Cpu::handle_exception(const Trap& trap) {
         mstatus.bits.spie = mstatus.bits.sie;   // SPIE ← SIE
         mstatus.bits.sie  = 0;
         // stvec 低 2 位 = 0 → Direct，= 1 → Vectored
-        pc = (stvec & ~3u) + ((stvec & 0x3) == 1 ? (cause << 2) : 0);
+        // ★ Vectored 仅对【中断】生效；同步异常（cause 最高位=0）不偏移
+        pc = (stvec & ~3u) +
+             (((stvec & 0x3) == 1 && (cause & 0x80000000u))
+                ? ((cause & 0x7fffffffu) << 2) : 0);
     } else {
         // ---- 交给 M 模式 ----
         mstatus.bits.mpp  = privilege;
@@ -813,7 +832,9 @@ void Cpu::handle_exception(const Trap& trap) {
         mtval             = trap.value;
         mstatus.bits.mpie = mstatus.bits.mie;
         mstatus.bits.mie  = 0;
-        pc = (mtvec & ~3u) + ((mtvec & 0x3) == 1 ? (cause << 2) : 0);
+        pc = (mtvec & ~3u) +
+             (((mtvec & 0x3) == 1 && (cause & 0x80000000u))
+                ? ((cause & 0x7fffffffu) << 2) : 0);
     }
 }
 

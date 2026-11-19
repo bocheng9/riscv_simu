@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include "cpu.h"
+#include "rvc.h"
 #include <stdexcept>
 
 Cpu::Cpu() {
@@ -112,9 +113,20 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
         case 0x343:  // mtval
             val = mtval;
             break;
-        case 0x344:  // mtval
+        case 0x344:  // mip
             val = mip;
             break;
+        // ---- 计数器 ----
+        case 0xb00: val = mcycle;                 break;  // mcycle
+        case 0xb80: val = mcycleh;                break;  // mcycleh
+        case 0xb02: val = static_cast<uint32_t>(instret_cnt & 0xffffffff);        break;
+        case 0xb82: val = static_cast<uint32_t>((instret_cnt >> 32) & 0xffffffff); break;
+        case 0xc00: val = mcycle;                 break;  // cycle
+        case 0xc80: val = mcycleh;                break;  // cycleh
+        case 0xc01: val = static_cast<uint32_t>(mtime & 0xffffffff);         break;  // time
+        case 0xc81: val = static_cast<uint32_t>((mtime >> 32) & 0xffffffff); break;  // timeh
+        case 0xc02: val = static_cast<uint32_t>(instret_cnt & 0xffffffff);        break;  // instret
+        case 0xc82: val = static_cast<uint32_t>((instret_cnt >> 32) & 0xffffffff); break;  // instreth
         case 0x100:  // sstatus
             val = mstatus.value & 0x800d6133;
             break;
@@ -211,8 +223,19 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
         case 0x343:  // mtval
             mtval = val;
             break;
-        case 0x344:  // mtval
+        case 0x344:  // mip
             mip = val;
+            break;
+        // ---- 计数器（可写，OpenSBI 会初始化）----
+        case 0xb00: mcycle = val; break;
+        case 0xb80: mcycleh = val; break;
+        case 0xb02:
+            instret_cnt = (instret_cnt & 0xffffffff00000000ull) | val;
+            instret_written = true;
+            break;
+        case 0xb82:
+            instret_cnt = (instret_cnt & 0xffffffffull) | (static_cast<uint64_t>(val) << 32);
+            instret_written = true;
             break;
         case 0x100:  // sstatus
             mstatus.value &= ~0x800d6133;
@@ -436,8 +459,35 @@ void Cpu::execute() {
     }
 
 
+    // 取指地址对齐检查：RVC 要求 2 字节对齐（无 C 扩展时才要求 4 字节）
+    if (pc & 0x1) {
+        throw Trap(0, pc);   // 指令地址非对齐
+    }
+
     /* STEP1: fetch instruction. */
-    const uint32_t inst = read_mem(pc, 4, FETCH);
+    uint32_t inst     = 0;   // 展开后的 32 位指令
+    uint32_t inst_len = 4;   // 原始指令长度（2 或 4）
+    const uint32_t raw = read_mem(pc & ~3u, 4, FETCH);
+    const uint32_t half = (pc & 0x2) ? (raw >> 16) : (raw & 0xffff);
+
+    // 判断是否为 16 位压缩指令（低 2 位 != 11）
+    const bool is_rvc = (half & 0x3) != 0x3;
+    if (is_rvc) {
+        const uint32_t expanded = rvc_expand(static_cast<uint16_t>(half));
+        if (expanded == 0) {
+            if (trace) {
+                printf("%08x: %04x     \t illegal \t # %08x\n", pc, half, pc);
+                inst_traced = true;
+            }
+            cur_inst = half;
+            throw Trap(2, half);
+        }
+        inst = expanded;
+        inst_len = 2;
+    } else {
+        inst = (pc & 0x2) ? ((raw >> 16) | (read_mem((pc & ~3u) + 4, 2, FETCH) << 16)) : raw;
+        inst_len = 4;
+    }
 
     cur_inst = inst;       // ★ 记录当前指令
     inst_traced = false;   // ★ 本指令尚未打印 trace
@@ -484,7 +534,7 @@ void Cpu::execute() {
         (inst >> 12 & 0xff) << 12 | (inst >> 31 & 0x1) << 20, 21);
 
     /* STEP3: excute instruction. */
-    uint32_t next_pc = pc + 4;
+    uint32_t next_pc = pc + inst_len;
     std::string op;
 
     switch (opcode7) {
@@ -699,7 +749,7 @@ void Cpu::execute() {
         }
         case 0x6f:  // JAL
             next_pc = pc + imm_j;
-            if ((next_pc & 0x3) == 0) reg[rd] = pc + 4;   // ★ 非对齐不写 rd
+            if ((next_pc & 0x1) == 0) reg[rd] = pc + inst_len;   // ★ 返回地址按原指令长度
             if (trace) {
                 printf("%08x: %08x \t jal %s, %d # %08x\n",
                     pc, inst, REG[rd], static_cast<int32_t>(imm_j), next_pc);
@@ -708,7 +758,7 @@ void Cpu::execute() {
             break;
         case 0x67:  // JALR
             next_pc = (src1 + imm_i) & ~1u;
-            if ((next_pc & 0x3) == 0) reg[rd] = pc + 4;   // ★ 非对齐不写 rd
+            if ((next_pc & 0x1) == 0) reg[rd] = pc + inst_len;   // ★ 返回地址按原指令长度
             if (trace) {
                 printf("%08x: %08x \t jal %s, %d(%s) # %08x\n",
                     pc, inst, REG[rd], static_cast<int32_t>(imm_i), REG[rs1], next_pc);
@@ -737,7 +787,7 @@ void Cpu::execute() {
                         mstatus.bits.mie = mstatus.bits.mpie;   // MIE is set to MPIE.
                         mstatus.bits.mpie = 1;                  // MPIE is set to 1.
                         mstatus.bits.mpp = 0;                   // MPP is set to U-mode.
-                        next_pc = mepc & ~3;                    // PC is set to the value stored in mepc.
+                        next_pc = mepc & ~1u;                    // PC is set to the value stored in mepc.
                         if (trace) op = "mret";
                         break;
                     case 0x10200073:  // SRET
@@ -747,7 +797,7 @@ void Cpu::execute() {
                         mstatus.bits.sie  = mstatus.bits.spie; // SIE ← SPIE
                         mstatus.bits.spie = 1;                 // SPIE ← 1
                         mstatus.bits.spp  = 0;                 // SPP ← U 模式
-                        next_pc = sepc & ~3u;                  // PC ← sepc
+                        next_pc = sepc & ~1u;                  // PC ← sepc
                         if (trace) op = "sret";
                         break;
                     case 0x10500073:  // WFI
@@ -919,13 +969,24 @@ void Cpu::execute() {
     }
 
     /* STEP4: 取指地址对齐检查（RISC-V 规范：非 4 字节对齐 → cause=0）*/
-    if (next_pc & 0x3) {
+    // 有 C 扩展时跳转目标只需 2 字节对齐
+    if (next_pc & 0x1) {
         throw Trap(0, next_pc);   // Instruction address misaligned
     }
 
     /* STEP5: update PC. */
     pc = next_pc;
     reg[0] = 0; // Reset zero.
+
+    /* STEP5.1: 计数器递增
+     *   ★ 若本条指令写过 minstret/minstret h（0xB02/0xB82），
+     *     则本次自增被抑制——规范要求 csrw minstret 后立即读到所写值。
+     */
+    mcycle += 1;
+    if (!instret_written) {
+        instret_cnt += 1;
+    }
+    instret_written = false;
 
 }
 

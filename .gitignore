@@ -28,3 +28,7 @@ test/
 cmp_trace_v2.py
 run_isa_v3.sh
 v3sim
+
+# 工具链与本地产物
+toolchain/
+busybox_build/

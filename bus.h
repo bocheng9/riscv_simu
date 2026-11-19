@@ -31,6 +31,9 @@ public:
     /* Load ELF to memory. */
     void load_elf(const std::string& path);
 
+    /* Load raw binary to memory at given virtual offset from base_addr. */
+    void load_bin(const std::string& path, uint32_t offset = 0);
+
     /* Read N bytes from DRAM. */
     uint32_t read(uint32_t addr, uint32_t n_bytes) override;
 

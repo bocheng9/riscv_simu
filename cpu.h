@@ -78,6 +78,15 @@ protected:
     uint32_t mcycle;
     uint32_t mcycleh;
 
+    /* 实时时钟（由 CLINT 每步推入），供 time/timeh CSR 读取 */
+    uint64_t mtime = 0;
+
+    /* 已退休指令计数（instret/instreth 的计数基础）*/
+    uint64_t instret_cnt = 0;
+
+    /* 本条指令刚写过 minstret，用于抑制本次自增 */
+    bool instret_written = false;
+
     uint32_t stvec;
     uint32_t sscratch;
     uint32_t sepc;
@@ -96,10 +105,24 @@ protected:
     uint32_t last_exc_pc = 0xFFFFFFFF; // ★ 上次异常发生的 PC
     void execute();
     void throw_illegal();
+
+
     void handle_exception(const Trap& trap);
 
 public:
     Cpu();
+
+    /* 由外部（CLINT）每步调用：更新实时时钟 */
+    void update_time(uint64_t t) { mtime = t; }
+
+    /* 当前 PC（供调试输出）*/
+    [[nodiscard]] uint32_t get_pc() const { return pc; }
+
+    /* 设置启动上下文（OpenSBI 约定：a0=hartid, a1=dtb 物理地址）*/
+    void set_boot_context(uint32_t hartid, uint32_t dtb_addr) {
+        reg[10] = hartid;
+        reg[11] = dtb_addr;
+    }
 
     /* Connet to BUS. */
     void connect(Bus *b);

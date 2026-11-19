@@ -1,6 +1,7 @@
 //
 
 #include <stdexcept>
+#include <fstream>
 #include "bus.h"
 #include "utils.h"
 
@@ -14,6 +15,19 @@ Dram::Dram(const uint32_t base_addr, const uint32_t size) {
 /* Load ELF to memory. */
 void Dram::load_elf(const std::string &path) {
     load_elf_to_mem(path, mem, base_addr);
+}
+
+/* Load raw binary into memory. */
+void Dram::load_bin(const std::string &path, const uint32_t offset) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) throw std::runtime_error("BIN: could not open " + path);
+    f.seekg(0, std::ios::end);
+    const auto len = static_cast<size_t>(f.tellg());
+    f.seekg(0, std::ios::beg);
+    if (offset + len > mem.size()) {
+        throw std::runtime_error("BIN: image too large for DRAM");
+    }
+    f.read(reinterpret_cast<char*>(mem.data() + offset), static_cast<std::streamsize>(len));
 }
 
 /* Read N bytes from DRAM. */

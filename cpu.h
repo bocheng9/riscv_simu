@@ -65,6 +65,9 @@ protected:
     /* PMP（当前仅实现 CSR 存储，暂不做权限拦截）*/
     uint32_t pmpcfg[4]  = {0, 0, 0, 0};
     uint32_t pmpaddr[16] = {0};
+
+    /* 调试触发器（0x7A0-0x7BF，共 32 个）：当前仅做 CSR 存储 */
+    uint32_t tdata[32] = {0};
     uint32_t mie;
     uint32_t mtvec;
     uint32_t mscratch;
@@ -92,6 +95,7 @@ protected:
     bool inst_traced = false; // ★ 本指令是否已打印过 trace
     uint32_t last_exc_pc = 0xFFFFFFFF; // ★ 上次异常发生的 PC
     void execute();
+    void throw_illegal();
     void handle_exception(const Trap& trap);
 
 public:

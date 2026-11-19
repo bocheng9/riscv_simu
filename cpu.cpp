@@ -53,10 +53,21 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
             val = mstatus.value;
             break;
         case 0x301:  // misa
-            val = 0x40041101;
+            val = 0x40141101;   // A+I+M+S+U
             break;
         case 0x302:  // medeleg
             val = medeleg;
+            break;
+        // 调试触发器 CSR（0x7A0-0x7BF）
+        case 0x7a0: case 0x7a1: case 0x7a2: case 0x7a3:
+        case 0x7a4: case 0x7a5: case 0x7a6: case 0x7a7:
+        case 0x7a8: case 0x7a9: case 0x7aa: case 0x7ab:
+        case 0x7ac: case 0x7ad: case 0x7ae: case 0x7af:
+        case 0x7b0: case 0x7b1: case 0x7b2: case 0x7b3:
+        case 0x7b4: case 0x7b5: case 0x7b6: case 0x7b7:
+        case 0x7b8: case 0x7b9: case 0x7ba: case 0x7bb:
+        case 0x7bc: case 0x7bd: case 0x7be: case 0x7bf:
+            val = tdata[addr & 0x1f];
             break;
         // PMP 配置寄存器（0x3A0-0x3A3，RV32 只有 4 个）
         case 0x3a0: val = pmpcfg[0]; break;
@@ -145,6 +156,17 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
             break;
         case 0x302:  // medeleg
             medeleg = val;
+            break;
+        // 调试触发器 CSR（0x7A0-0x7BF）
+        case 0x7a0: case 0x7a1: case 0x7a2: case 0x7a3:
+        case 0x7a4: case 0x7a5: case 0x7a6: case 0x7a7:
+        case 0x7a8: case 0x7a9: case 0x7aa: case 0x7ab:
+        case 0x7ac: case 0x7ad: case 0x7ae: case 0x7af:
+        case 0x7b0: case 0x7b1: case 0x7b2: case 0x7b3:
+        case 0x7b4: case 0x7b5: case 0x7b6: case 0x7b7:
+        case 0x7b8: case 0x7b9: case 0x7ba: case 0x7bb:
+        case 0x7bc: case 0x7bd: case 0x7be: case 0x7bf:
+            tdata[addr & 0x1f] = val;
             break;
         // PMP 配置寄存器（只保留低 8 位有效字段）
         case 0x3a0: pmpcfg[0] = val & 0xFFu; break;
@@ -354,6 +376,14 @@ void Cpu::write_mem(const uint32_t addr, const uint32_t n_bytes, const uint32_t 
 }
 
 
+void Cpu::throw_illegal() {
+    if (trace && !inst_traced) {
+        printf("%08x: %08x \t illegal \t # %08x\n", pc, cur_inst, pc);
+        inst_traced = true;
+    }
+    throw Trap(2, cur_inst);
+}
+
 void Cpu::execute() {
     /* STEP0: 中断检查（在指令执行前，mepc = 当前 pc 即下一条待执行指令）*/
     {
@@ -436,7 +466,7 @@ void Cpu::execute() {
                         if (rd != 0) reg[rd] =
                             signed_mul(static_cast<int32_t>(src1), static_cast<int32_t>(src2)) & 0xffffffff;
                         if (trace) op = "mul";
-                    } else throw Trap(2, inst);  // Illegal instruction.
+                    } else throw_illegal();  // Illegal instruction.
                     break;
                 case 1:
                     if (funct7 == 0) {  // SLL
@@ -446,7 +476,7 @@ void Cpu::execute() {
                         if (rd != 0) reg[rd] =
                             signed_mul(static_cast<int32_t>(src1), static_cast<int32_t>(src2)) >> 32 & 0xffffffff;
                         if (trace) op = "mulh";
-                    } else throw Trap(2, inst);  // Illegal instruction.
+                    } else throw_illegal();  // Illegal instruction.
                     break;
                 case 2:
                     if (funct7 == 0) {  // SLT
@@ -455,7 +485,7 @@ void Cpu::execute() {
                     } else if (funct7 == 1) {  // MULHSU
                         if (rd != 0) reg[rd] = signed_mul(static_cast<int32_t>(src1), src2) >> 32 & 0xffffffff;
                         if (trace) op = "mulhsu";
-                    } else throw Trap(2, inst);  // Illegal instruction.
+                    } else throw_illegal();  // Illegal instruction.
                     break;
                 case 3:
                     if (funct7 == 0) {  // SLTU
@@ -465,7 +495,7 @@ void Cpu::execute() {
                         if (rd != 0) reg[rd] =
                             signed_mul(src1, src2) >> 32 & 0xffffffff;
                         if (trace) op = "mulhu";
-                    } else throw Trap(2, inst);  // Illegal instruction.
+                    } else throw_illegal();  // Illegal instruction.
                     break;
                 case 4:
                     if (funct7 == 0) {  // XOR
@@ -474,7 +504,7 @@ void Cpu::execute() {
                     } else if (funct7 == 1) {
                         if (rd != 0) reg[rd] = signed_div(static_cast<int32_t>(src1), static_cast<int32_t>(src2));
                         if (trace) op = "div";
-                    } else throw Trap(2, inst);  // Illegal instruction.
+                    } else throw_illegal();  // Illegal instruction.
                     break;
                 case 5:
                     if (funct7 == 0) {  // SRL
@@ -486,7 +516,7 @@ void Cpu::execute() {
                     } else if (funct7 == 1) {  // DIVU
                         if (rd != 0) reg[rd] = signed_div(src1, src2);
                         if (trace) op = "divu";
-                    } else throw Trap(2, inst);
+                    } else throw_illegal();
                     break;
                 case 6:
                     if (funct7 == 0) {  // OR
@@ -495,7 +525,7 @@ void Cpu::execute() {
                     } else if (funct7 == 1) {  // REM
                         if (rd != 0) reg[rd] = signed_rem(static_cast<int32_t>(src1), static_cast<int32_t>(src2));
                         if (trace) op = "rem";
-                    } else throw Trap(2, inst);  // Illegal instruction.
+                    } else throw_illegal();  // Illegal instruction.
                     break;
                 case 7:
                     if (funct7 == 0) {  // AND
@@ -504,10 +534,10 @@ void Cpu::execute() {
                     } else if (funct7 == 1) {  // REMU
                         if (rd != 0) reg[rd] = signed_rem(src1, src2);
                         if (trace) op = "remu";
-                    } else throw Trap(2, inst);  // Illegal instruction.
+                    } else throw_illegal();  // Illegal instruction.
                     break;
                 default:
-                    throw Trap(2, inst);  // Illegal instruction.
+                    throw_illegal();  // Illegal instruction.
             }
             if (trace) printf("%08x: %08x \t %s %s, %s, %s\n",
                 pc, inst, op.c_str(), REG[rd], REG[rs1], REG[rs2]);
@@ -522,7 +552,7 @@ void Cpu::execute() {
                     if (funct7 == 0) {
                         if (rd != 0) reg[rd] = src1 << (imm_i & 0x1f);
                         if (trace) op = "slli";
-                    } else throw Trap(2, inst);  // Illegal instruction.
+                    } else throw_illegal();  // Illegal instruction.
                     break;
                 case 2:  // SLTI
                     if (rd != 0) reg[rd] = static_cast<int32_t>(src1) < static_cast<int32_t>(imm_i) ? 1 : 0;
@@ -543,7 +573,7 @@ void Cpu::execute() {
                     } else if (funct7 == 0x20) {  // SRAI
                         if (rd != 0) reg[rd] = static_cast<int32_t>(src1) >> (imm_i & 0x1f);
                         if (trace) op = "srai";
-                    } else throw Trap(2, inst);  // Illegal instruction.
+                    } else throw_illegal();  // Illegal instruction.
                     break;
                 case 6:  // ORI
                     if (rd != 0) reg[rd] = src1 | imm_i;
@@ -554,7 +584,7 @@ void Cpu::execute() {
                     if (trace) op = "andi";
                     break;
                 default:
-                    throw Trap(2, inst);  // Illegal instruction.
+                    throw_illegal();  // Illegal instruction.
             }
             if (trace) printf("%08x: %08x \t %s %s, %s, %d\n",
                 pc, inst, op.c_str(), REG[rd], REG[rs1], static_cast<int32_t>(imm_i));
@@ -571,7 +601,7 @@ void Cpu::execute() {
                     printf("%08x: %08x \t %s %s, %d(%s) # %08x: %08x\n",
                         pc, inst, op.c_str(), REG[rd], static_cast<int32_t>(imm_i), REG[rs1], addr, data);
                 }
-            } else throw Trap(2, inst);  // Illegal instruction.
+            } else throw_illegal();  // Illegal instruction.
             break;
         }
         case 0x23: {  // S-type instructions.
@@ -584,7 +614,7 @@ void Cpu::execute() {
                     printf("%08x: %08x \t %s %s, %d(%s) # %08x <- %08x\n",
                         pc, inst, op.c_str(), REG[rs2], static_cast<int32_t>(imm_s), REG[rs1], addr, src2);
                 }
-            } else throw Trap(2, inst);  // Illegal instruction.
+            } else throw_illegal();  // Illegal instruction.
             break;
         }
         case 0x63: {  // B-type instructions.
@@ -615,7 +645,7 @@ void Cpu::execute() {
                     if (trace) op = "bgeu";
                     break;
                 default:
-                    throw Trap(2, inst);  // Illegal instruction.
+                    throw_illegal();  // Illegal instruction.
             }
             if (trace) {
                 printf("%08x: %08x \t %s %s, %s, %d # %08x\n",
@@ -669,7 +699,7 @@ void Cpu::execute() {
                         break;
                     case 0x10200073:  // SRET
                         // ★ 与 V2 一致：TSR=1 且当前为 S 模式 → illegal
-                        if (privilege == 1 && mstatus.bits.tsr) throw Trap(2, inst);
+                        if (privilege == 1 && mstatus.bits.tsr) throw_illegal();
                         privilege        = mstatus.bits.spp;   // 特权级 ← SPP
                         mstatus.bits.sie  = mstatus.bits.spie; // SIE ← SPIE
                         mstatus.bits.spie = 1;                 // SPIE ← 1
@@ -682,13 +712,32 @@ void Cpu::execute() {
                         break;
                     default:
                         if (rd == 0 && funct7 == 9) {  // SFENCE.VMA
-                            if (privilege == 1 && mstatus.bits.tvm) throw Trap(2, inst);
+                            if (privilege == 1 && mstatus.bits.tvm) throw_illegal();
                             if (trace) op = "sfence.vma";
-                        } else throw Trap(2, inst);
+                        } else throw_illegal();
                 }
                 if (trace) printf("%08x: %08x \t %s\n", pc, inst, op.c_str());
             } else {
                 uint16_t addr = imm_i & 0xfff;
+
+                // ★ 只读 CSR（cycle/time/instret 及其高位）：任何写操作都非法
+                const bool csr_writes = (funct3 == 1 || funct3 == 4 || rs1 != 0);
+                if (csr_writes &&
+                    (addr == 0xc00 || addr == 0xc01 || addr == 0xc02 ||
+                     addr == 0xc80 || addr == 0xc81 || addr == 0xc82)) {
+                    throw_illegal();
+                }
+
+                // ★ 特权检查：CSR 地址的 [9:8] 位大于当前特权级 → 非法
+                if (((addr >> 8) & 3) > privilege) {
+                    throw_illegal();
+                }
+
+                // ★ TVM=1 时，S 模式读写 satp → 非法
+                if (privilege == 1 && mstatus.bits.tvm && addr == 0x180) {
+                    throw_illegal();
+                }
+
                 uint32_t old_val = read_csr(addr);
                 uint32_t new_val;
                 switch (funct3) {
@@ -717,7 +766,7 @@ void Cpu::execute() {
                         if (trace) op = "csrrci";
                         break;
                     default:
-                        throw Trap(2, inst);  // Illegal instruction.
+                        throw_illegal();  // Illegal instruction.
                 }
                 write_csr(addr, new_val);
                 if (rd != 0) reg[rd] = old_val;
@@ -772,7 +821,7 @@ void Cpu::execute() {
                             if (trace) op = "amomaxu.w";
                             break;
                         default:
-                            throw Trap(2, inst);
+                            throw_illegal();
                     }
                     write_mem(src1, 4, new_val);
                     if (rd != 0) reg[rd] = old_val;
@@ -801,10 +850,10 @@ void Cpu::execute() {
                     if (trace) printf("%08x: %08x \t sc.w %s, %s, (%s)\n",
                         pc, inst, REG[rd], REG[rs2], REG[rs1]);
                 } else {
-                    throw Trap(2, inst);
+                    throw_illegal();
                 }
             } else {
-                throw Trap(2, inst);
+                throw_illegal();
             }
             break;
         case 0xf:
@@ -813,12 +862,17 @@ void Cpu::execute() {
             } else if (funct3 == 1) {  // FENCE.I
                 op = "fencei";
             } else {
-                throw Trap(2, inst);
+                throw_illegal();
             }
             if (trace) printf("%08x: %08x \t %s\n", pc, inst, op.c_str());
             break;
         default:
-            throw Trap(2, inst);  // Illegal instruction.
+            // ★ 非法指令也要打印标准 trace 行（与 V2 一致），否则轨迹错位
+            if (trace) {
+                printf("%08x: %08x \t illegal \t # %08x\n", pc, inst, pc);
+                inst_traced = true;
+            }
+            throw_illegal();  // Illegal instruction.
     }
 
     /* STEP4: 取指地址对齐检查（RISC-V 规范：非 4 字节对齐 → cause=0）*/

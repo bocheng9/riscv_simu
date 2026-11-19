@@ -58,6 +58,28 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
         case 0x302:  // medeleg
             val = medeleg;
             break;
+        // PMP 配置寄存器（0x3A0-0x3A3，RV32 只有 4 个）
+        case 0x3a0: val = pmpcfg[0]; break;
+        case 0x3a1: val = pmpcfg[1]; break;
+        case 0x3a2: val = pmpcfg[2]; break;
+        case 0x3a3: val = pmpcfg[3]; break;
+        // PMP 地址寄存器（0x3B0-0x3BF，共 16 个）
+        case 0x3b0: val = pmpaddr[0];  break;
+        case 0x3b1: val = pmpaddr[1];  break;
+        case 0x3b2: val = pmpaddr[2];  break;
+        case 0x3b3: val = pmpaddr[3];  break;
+        case 0x3b4: val = pmpaddr[4];  break;
+        case 0x3b5: val = pmpaddr[5];  break;
+        case 0x3b6: val = pmpaddr[6];  break;
+        case 0x3b7: val = pmpaddr[7];  break;
+        case 0x3b8: val = pmpaddr[8];  break;
+        case 0x3b9: val = pmpaddr[9];  break;
+        case 0x3ba: val = pmpaddr[10]; break;
+        case 0x3bb: val = pmpaddr[11]; break;
+        case 0x3bc: val = pmpaddr[12]; break;
+        case 0x3bd: val = pmpaddr[13]; break;
+        case 0x3be: val = pmpaddr[14]; break;
+        case 0x3bf: val = pmpaddr[15]; break;
         case 0x303:  // medeleg
             val = mideleg;
             break;
@@ -124,6 +146,28 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
         case 0x302:  // medeleg
             medeleg = val;
             break;
+        // PMP 配置寄存器（只保留低 8 位有效字段）
+        case 0x3a0: pmpcfg[0] = val & 0xFFu; break;
+        case 0x3a1: pmpcfg[1] = val & 0xFFu; break;
+        case 0x3a2: pmpcfg[2] = val & 0xFFu; break;
+        case 0x3a3: pmpcfg[3] = val & 0xFFu; break;
+        // PMP 地址寄存器
+        case 0x3b0: pmpaddr[0]  = val; break;
+        case 0x3b1: pmpaddr[1]  = val; break;
+        case 0x3b2: pmpaddr[2]  = val; break;
+        case 0x3b3: pmpaddr[3]  = val; break;
+        case 0x3b4: pmpaddr[4]  = val; break;
+        case 0x3b5: pmpaddr[5]  = val; break;
+        case 0x3b6: pmpaddr[6]  = val; break;
+        case 0x3b7: pmpaddr[7]  = val; break;
+        case 0x3b8: pmpaddr[8]  = val; break;
+        case 0x3b9: pmpaddr[9]  = val; break;
+        case 0x3ba: pmpaddr[10] = val; break;
+        case 0x3bb: pmpaddr[11] = val; break;
+        case 0x3bc: pmpaddr[12] = val; break;
+        case 0x3bd: pmpaddr[13] = val; break;
+        case 0x3be: pmpaddr[14] = val; break;
+        case 0x3bf: pmpaddr[15] = val; break;
         case 0x303:  // mideleg
             mideleg = val;
             break;

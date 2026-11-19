@@ -61,6 +61,10 @@ protected:
     mstatus_t mstatus{};
     uint32_t medeleg;
     uint32_t mideleg;
+
+    /* PMP（当前仅实现 CSR 存储，暂不做权限拦截）*/
+    uint32_t pmpcfg[4]  = {0, 0, 0, 0};
+    uint32_t pmpaddr[16] = {0};
     uint32_t mie;
     uint32_t mtvec;
     uint32_t mscratch;

@@ -1,6 +1,4 @@
 //
-// Created by Chengbo on 2026/6/27.
-//
 
 #ifndef RVSIMU_V3_CPU_H
 #define RVSIMU_V3_CPU_H

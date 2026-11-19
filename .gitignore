@@ -20,3 +20,10 @@ out.log
 
 # ISA 测试用例（ELF 体积大，用 riscv-tests 自行编译）
 isa_test/
+
+# 测试固件（体积大）
+test/
+
+# 本地回归脚本
+cmp_trace_v2.py
+run_isa_v3.sh

@@ -1,6 +1,4 @@
 //
-// Created by Chengbo on 2026/6/26.
-//
 
 #ifndef RVSIMU_V3_BUS_H
 #define RVSIMU_V3_BUS_H

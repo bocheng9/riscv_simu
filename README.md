@@ -1,63 +1,76 @@
-# RVSIMU_V3 — RISC-V RV32IMA 模拟器（C++）
+# RVSIMU_V3
 
-以 Python 版 RVSIMU_V2 为参考模型，通过 **RISC-V 官方 ISA 测试集**验证，
-要求 **执行轨迹逐条一致**（PC + 指令码）。
+RISC-V RV32IMA 指令集模拟器（C++17），支持 Zicsr、Zifencei 扩展与 M/S/U 三特权级。
 
-## 当前状态
+## 支持的指令集
 
-| 项 | 结果 |
+| 扩展 | 说明 |
 |---|---|
-| ISA 用例回归 | **66/66 PASS** |
-| 与 V2 轨迹比对 | **66/66 完全一致** |
+| RV32I | 基础整数指令 |
+| RV32M | 乘除法 |
+| RV32A | 原子操作（LR/SC、AMO） |
+| Zicsr | CSR 读写指令 |
+| Zifencei | 指令流同步 |
 
-## 构建与运行
+## 体系结构
+
+- 五级语义顺序执行：取指、译码、执行、访存、写回
+- 三特权级：M / S / U，支持 mret、sret 的完整上下文切换
+- 异常委托：medeleg / mideleg，trap 按委托位决定进入 M 模式或 S 模式
+- Sv32 分页：两级页表、TLB、A/D 位软件更新
+- 中断：软件/定时器/外部中断，支持 Direct 与 Vectored 两种 tvec 模式
+- 非对齐访问：load/store 跨字拆分为两段
+
+## 已实现的 CSR
+
+mstatus、misa、medeleg、mideleg、mie、mtvec、mcounteren、mscratch、mepc、
+mcause、mtval、mip、mcycle、minstret、mvendorid、marchid、mimpid、mhartid、
+sstatus、sie、stvec、sscratch、sepc、scause、stval、satp
+
+## 目录结构
+
+```
+main.cpp              程序入口：ELF 载入、执行循环、结束判定
+cpu.h / cpu.cpp       指令执行、CSR、异常与中断、地址翻译
+bus.h / bus.cpp       内存总线与设备映射
+utils.h / utils.cpp   ELF 解析、符号查找
+CMakeLists.txt        CMake 构建配置
+```
+
+## 构建
 
 ```bash
-# 构建
-g++ -std=c++17 -O2 -o v3sim main.cpp cpu.cpp bus.cpp utils.cpp
-
-# 跑单个用例
-./v3sim isa_test/rv32ui-p-add              # 判定 PASS/FAIL
-./v3sim isa_test/rv32ui-p-add --trace      # 带指令轨迹
-./v3sim isa_test/rv32ui-p-add --no-isa     # 只跑不判（用于轨迹对拍）
-./v3sim isa_test/rv32ui-p-add --max 5000   # 周期上限
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
 ```
 
-## 回归测试
+或直接编译：
 
 ```bash
-# ISA 用例全量回归
-./run_isa_v3.sh
-
-# 与 Python V2 逐条轨迹比对（需 ../RVSIMU_V2）
-python3 cmp_trace_v2.py
-python3 cmp_trace_v2.py rv32ui-p-add      # 单用例
-V2_DIR=/path/to/RVSIMU_V2 python3 cmp_trace_v2.py
+g++ -std=c++17 -O2 -o rvsimu main.cpp cpu.cpp bus.cpp utils.cpp
 ```
 
-## 目录
+## 运行
 
-```
-main.cpp            入口：ELF 载入、运行循环、tohost 判定
-cpu.h / cpu.cpp     五级语义的指令执行、CSR、异常委托、MMU
-bus.h / bus.cpp     地址映射与设备
-utils.h / utils.cpp ELF 解析、tohost 符号查找
-isa_test/           66 个 ISA 用例（ELF）
-run_isa_v3.sh       批量回归脚本
-cmp_trace_v2.py     与 V2 轨迹比对脚本
+```bash
+./rvsimu <elf文件>
 ```
 
-## 已实现特性
+## 命令行选项
 
-- **RV32IMA**：基础整数、乘除、原子操作（LR/SC、AMO）
-- **M/S/U 三特权级**：`mret` / `sret` 的完整上下文切换
-- **异常委托**：`medeleg` / `mideleg`，trap 按委托位决定进 M 还是 S 模式
-- **Sv32 MMU**：两级页表、TLB、A/D 位软件更新（缺 A/D 触发 page fault）
-- **CSR**：mstatus / mie / mtvec / mepc / mcause / mtval / medeleg / mideleg /
-  sstatus / sie / stvec / sepc / scause / stval / satp / sscratch 等
-- **取指地址对齐检查**：非 4 字节对齐触发 `cause=0`
+| 选项 | 说明 |
+|---|---|
+| `--trace` | 输出逐条指令执行轨迹 |
+| `--no-isa` | 不进行 ISA 测试判定，仅执行 |
+| `--max N` | 设置执行周期上限 |
+| `--quiet` | 仅输出最终结果 |
 
-## 与 V2 的已知差异（非 bug）
+## 内存模型
 
-V2 的部分指令没有打印 trace（`csrrci` / `fence` / `fence.i` / `wfi` / `sfence.vma`），
-已在 V2 侧补齐，两边格式现已统一。
+| 地址范围 | 说明 |
+|---|---|
+| 0x8000_0000 起 1MB | DRAM，程序载入与执行区 |
+
+## 许可
+
+本项目为个人学习与验证用途。RISC-V 是 RISC-V International 的注册商标。

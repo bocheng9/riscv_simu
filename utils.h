@@ -1,6 +1,4 @@
 //
-// Created by Chengbo on 2026/6/24.
-//
 
 #ifndef RISCV_SIMU_UTILS_H
 #define RISCV_SIMU_UTILS_H

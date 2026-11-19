@@ -1,6 +1,4 @@
 //
-// Created by Chengbo on 2026/6/26.
-//
 
 #include <stdexcept>
 #include "bus.h"

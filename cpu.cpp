@@ -1,6 +1,4 @@
 //
-// Created by Chengbo on 2026/6/27.
-//
 
 #include <cstdio>
 #include "cpu.h"

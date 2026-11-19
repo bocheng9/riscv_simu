@@ -1,6 +1,4 @@
 //
-// Created by Chengbo on 2026/6/24.
-//
 
 #include "utils.h"
 #include <fstream>

@@ -385,6 +385,41 @@ void Cpu::throw_illegal() {
 }
 
 void Cpu::execute() {
+    /* STEP -1: 硬件断点判定
+     *   mcontrol（type=2）：按 tdata1 的使能位与访存类型判断是否在 tdata2 处触发
+     *   action=4 → breakpoint 异常（cause = 3）
+     *   kind: 0=取指, 1=load, 2=store
+     */
+    auto bp_hit = [&](const uint32_t vaddr, const int kind) -> bool {
+        const uint32_t td1    = tdata[1];
+        const uint32_t type   = (td1 >> 28) & 0xf;
+        const uint32_t dmode  = (td1 >> 27) & 1;
+        const uint32_t action = (td1 >> 12) & 0xf;   // 0=breakpoint, 1=exception
+        const uint32_t match  = (td1 >> 7) & 0xf;
+        const uint32_t chain  = (td1 >> 11) & 1;
+        const bool m_bit = (td1 >> 6) & 1;
+        const bool u_bit = (td1 >> 3) & 1;
+        const bool exec_b  = (td1 >> 2) & 1;
+        const bool store_b = (td1 >> 1) & 1;
+        const bool load_b  = td1 & 1;
+
+        if (dmode || chain || type != 2 || match != 0) return false;
+        if (action != 0 && action != 4) return false;   // 0=breakpoint, 4=breakpoint（两种编码）
+        if (!((privilege == 3 && m_bit) || (privilege == 0 && u_bit))) return false;
+
+        const bool kind_ok =
+            (kind == 0 && exec_b) || (kind == 1 && load_b) || (kind == 2 && store_b);
+        return kind_ok && tdata[2] == vaddr;
+    };
+
+    if (bp_hit(pc, 0)) {
+        if (trace) {
+            printf("%08x: %08x \t exc \t # %08x\n", pc, 0u, 3u);
+            inst_traced = true;
+        }
+        throw Trap(3, pc);
+    }
+
     /* STEP0: 中断检查（在指令执行前，mepc = 当前 pc 即下一条待执行指令）*/
     {
         const uint32_t pending = mip & mie;
@@ -593,6 +628,10 @@ void Cpu::execute() {
             if ((funct3 & 3) != 3) {
                 const uint8_t n_bytes = 1 << (funct3 & 0x3);        // Get byte number.
                 const uint32_t addr = src1 + imm_i;                 // Get address.
+                if (bp_hit(addr, 1)) {
+                    if (trace) { printf("%08x: %08x \t exc \t # %08x\n", pc, inst, 3u); inst_traced = true; }
+                    throw Trap(3, addr);
+                }
                 const uint32_t data = read_mem(addr , n_bytes, LOAD);    // Load data.
                 if (rd != 0) reg[rd] = funct3 & 0x4? data : signed_extend(data, n_bytes << 3);
                 if (trace) {
@@ -608,6 +647,10 @@ void Cpu::execute() {
             if ((funct3 & 3) != 3) {
                 const uint8_t n_bytes = 1 << (funct3 & 0x3);        // Get byte number.
                 const uint32_t addr = src1 + imm_s;                 // Get address.
+                if (bp_hit(addr, 2)) {
+                    if (trace) { printf("%08x: %08x \t exc \t # %08x\n", pc, inst, 3u); inst_traced = true; }
+                    throw Trap(3, addr);
+                }
                 write_mem(addr, n_bytes, src2);
                 if (trace) {
                     op = n_bytes == 1? "sb" : n_bytes == 2? "sh" : "sw";

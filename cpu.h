@@ -7,6 +7,7 @@
 
 #include <array>
 #include <map>
+#include <string>
 
 #include "Bus.h"
 
@@ -23,16 +24,17 @@ union mstatus_t {
         uint32_t ube   : 1;     // [6]    User-mode Endianness (0: Little-Endian, 1: Big-Endian)
         uint32_t mpie  : 1;     // [7]    Previous Machine Interrupt Enable (Preserved on trap)
         uint32_t spp   : 1;     // [8]    Previous Supervisor Privilege Mode (0: U-mode, 1: S-mode)
-        uint32_t mpp   : 2;     // [10:9] Previous Machine Privilege Mode (00: U, 01: S, 11: M)
-        uint32_t vs    : 2;     // [12:11] Vector Extension Status (00:Off, 01:Initial, 10:Clean, 11:Dirty)
+        uint32_t wpri3 : 2;     // [10:9] Previous Machine Privilege Mode (00: U, 01: S, 11: M)
+        uint32_t mpp   : 2;     // [12:11] Vector Extension Status (00:Off, 01:Initial, 10:Clean, 11:Dirty)
         uint32_t fs    : 2;     // [14:13] Floating-Point Status (00:Off, 01:Initial, 10:Clean, 11:Dirty)
-        uint32_t mprv  : 1;     // [15]   Modify Privilege (1: data loads/stores use MPP privilege level)
-        uint32_t sum   : 1;     // [16]   Permit Supervisor User Memory Access (1: S-mode can access U-mode pages)
-        uint32_t mxr   : 1;     // [17]   Make Executable Readable (1: loads can read from execute-only pages)
-        uint32_t tvm   : 1;     // [18]   Trap Virtual Memory (1: intercepts SFENCE.VMA and satp writes in S-mode)
-        uint32_t tw    : 1;     // [19]   Timeout Wait (1: intercepts WFI instruction execution in lower modes)
-        uint32_t tsr   : 1;     // [20]   Trap SRET (1: intercepts SRET instruction execution in S-mode)
-        uint32_t wpri3 : 11;    // [31:21] WPRI - Reserved
+        uint32_t xs    : 2;     // [16:15] Extension State. Tracks the status of user-level extensions.
+        uint32_t mprv  : 1;     // [17]   Modify Privilege (1: data loads/stores use MPP privilege level)
+        uint32_t sum   : 1;     // [18]   Permit Supervisor User Memory Access (1: S-mode can access U-mode pages)
+        uint32_t mxr   : 1;     // [19]   Make Executable Readable (1: loads can read from execute-only pages)
+        uint32_t tvm   : 1;     // [20]   Trap Virtual Memory (1: intercepts SFENCE.VMA and satp writes in S-mode)
+        uint32_t tw    : 1;     // [21]   Timeout Wait (1: intercepts WFI instruction execution in lower modes)
+        uint32_t tsr   : 1;     // [22]   Trap SRET (1: intercepts SRET instruction execution in S-mode)
+        uint32_t wpri4 : 9;    // [31:23] WPRI - Reserved
     } bits;
 };
 
@@ -43,6 +45,13 @@ public:
     Trap(const uint32_t cause, const uint32_t val): cause(cause), value(val) {}
 };
 
+enum AccessType {
+    FETCH = 0,
+    LOAD,
+    STORE,
+    AMO,
+};
+
 class Cpu {
 protected:
     /* Registers. */
@@ -51,7 +60,9 @@ protected:
     std::array<uint32_t, 32> reg{};
 
     /* CSRs */
-    union mstatus_t mstatus{};
+    mstatus_t mstatus{};
+    uint32_t medeleg;
+    uint32_t mideleg;
     uint32_t mie;
     uint32_t mtvec;
     uint32_t mscratch;
@@ -62,12 +73,22 @@ protected:
     uint32_t mcycle;
     uint32_t mcycleh;
 
+    uint32_t stvec;
+    uint32_t sscratch;
+    uint32_t sepc;
+    uint32_t scause;
+    uint32_t stval;
+    uint32_t satp;
+
     /* Connection. */
     bool reserve;
     Bus *bus;
 
     /* Execute one instruction at a time. */
     bool trace;
+    uint32_t cur_inst = 0;   // ★ 当前指令（供异常 trace 补行用）
+    bool inst_traced = false; // ★ 本指令是否已打印过 trace
+    uint32_t last_exc_pc = 0xFFFFFFFF; // ★ 上次异常发生的 PC
     void execute();
     void handle_exception(const Trap& trap);
 
@@ -77,9 +98,14 @@ public:
     /* Connet to BUS. */
     void connect(Bus *b);
 
-    /* Read CSR. */
+    /* Read and write CSR. */
     [[nodiscard]] uint32_t read_csr(uint16_t addr) const;
     void write_csr(uint16_t addr, uint32_t val);
+
+    /* Read and write MEM. */
+    [[nodiscard]] uint32_t mmu(uint32_t v_addr, AccessType access_type) const;
+    [[nodiscard]] uint32_t read_mem(uint32_t addr, uint32_t n_bytes, AccessType access_type) const;
+    void write_mem(uint32_t addr, uint32_t n_bytes, uint32_t data) const;
 
     /* Run CPU. */
     void run();

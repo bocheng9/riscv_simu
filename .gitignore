@@ -1,0 +1,22 @@
+# 构建产物
+build/
+cmake-build-*/
+*.o
+*.exe
+v3sim
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# 本地备份
+*.bak
+*.orig
+
+# 运行产物
+out.log
+
+# ISA 测试用例（ELF 体积大，用 riscv-tests 自行编译）
+isa_test/

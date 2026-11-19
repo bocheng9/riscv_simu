@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include "cpu.h"
+#include <stdexcept>
 
 Cpu::Cpu() {
     /* Initialize registers. */
@@ -13,6 +14,8 @@ Cpu::Cpu() {
 
     /* Initialize CSRs. */
     mstatus.value = 0;
+    medeleg = 0;
+    mideleg = 0;
     mie = 0;
     mtvec = 0;
     mscratch = 0;
@@ -22,6 +25,11 @@ Cpu::Cpu() {
     mip = 0;
     mcycle = 0;
     mcycleh = 0;
+
+    stvec = 0;
+    sscratch = 0;
+    sepc = 0;
+    satp = 0;
 
     /* Init BUS. */
     reserve = false;
@@ -49,6 +57,12 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
         case 0x301:  // misa
             val = 0x40041101;
             break;
+        case 0x302:  // medeleg
+            val = medeleg;
+            break;
+        case 0x303:  // medeleg
+            val = mideleg;
+            break;
         case 0x304:  // mie
             val = mie;
             break;
@@ -70,6 +84,27 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
         case 0x344:  // mtval
             val = mip;
             break;
+        case 0x100:  // sstatus
+            val = mstatus.value & 0x800d6133;
+            break;
+        case 0x105:  // stvec
+            val = stvec;
+            break;
+        case 0x140:  // sscratch
+            val = sscratch;
+            break;
+        case 0x141:  // sepc
+            val = sepc;
+            break;
+        case 0x142:  // scause
+            val = scause;
+            break;
+        case 0x143:  // stval
+            val = stval;
+            break;
+        case 0x180:  // satp
+            val = satp;
+            break;
         default:
             if (trace) printf("CSR: %x not implemented\n", addr);
             break;
@@ -87,6 +122,12 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
             break;
         case 0x300:  // mstatus
             mstatus.value = val;
+            break;
+        case 0x302:  // medeleg
+            medeleg = val;
+            break;
+        case 0x303:  // mideleg
+            mideleg = val;
             break;
         case 0x304:  // mie
             mie = val;
@@ -109,16 +150,175 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
         case 0x344:  // mtval
             mip = val;
             break;
+        case 0x100:  // sstatus
+            mstatus.value &= ~0x800d6133;
+            mstatus.value |= 0x800d6133 & val;
+            break;
+        case 0x105:  // stvec
+            stvec = val;
+            break;
+        case 0x140:  // sscratch
+            sscratch = val;
+            break;
+        case 0x141:  // sepc
+            sepc = val;
+            break;
+        case 0x142:  // scause
+            scause = val;
+            break;
+        case 0x180:  // satp
+            satp = val;
+            break;
         default:
             if (trace) printf("CSR: %x not implemented\n", addr);
             break;
     }
 }
 
+
+uint8_t PAGE_FAULT[4] = {12, 13, 15, 15};
+uint8_t ACCESS_FAULT[4] = {1, 5, 7, 7};
+uint32_t Cpu::mmu(const uint32_t v_addr, const AccessType access_type) const {
+        // 1. Let a be satp.ppn * PAGESIZE, and let i = LEVELS − 1. (For Sv32, PAGESIZE=212 and LEVELS=2.)
+        // 2. Let pte be the value of the PTE at address a+va.vpn[i] * PTESIZE. (For Sv32, PTESIZE=4.)
+        // If accessing pte violates a PMA or PMP check, raise an access exception corresponding to
+        // the original access type.
+        // 3. If pte.v = 0, or if pte.r = 0 and pte.w = 1, stop and raise a page-fault exception corresponding
+        // to the original access type.
+        // 4. Otherwise, the PTE is valid. If pte.r = 1 or pte.x = 1, go to step 5. Otherwise, this PTE is a
+        // pointer to the next level of the page table. Let i = i − 1. If i < 0, stop and raise a page-fault
+        // exception corresponding to the original access type. Otherwise, let a = pte.ppn * PAGESIZE
+        // and go to step 2.
+        // 5. A leaf PTE has been found. Determine if the requested memory access is allowed by the
+        // pte.r, pte.w, pte.x, and pte.u bits, given the current privilege mode and the value of the
+        // SUM and MXR fields of the mstatus register. If not, stop and raise a page-fault exception
+        // corresponding to the original access type.
+        // 6. If i > 0 and pte.ppn[i − 1 : 0] ̸= 0, this is a misaligned superpage; stop and raise a page-fault
+        // exception corresponding to the original access type.
+        // 7. If pte.a = 0, or if the memory access is a store and pte.d = 0, either raise a page-fault
+        // exception corresponding to the original access type.
+        // 8. The translation is successful. The translated physical address is given as follows:
+        // pa.pgoff = va.pgoff.
+        // If i > 0, then this is a superpage translation and pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0].
+        // pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
+
+        uint8_t pri_mode = privilege;
+        if (mstatus.bits.mprv != 0 && (access_type == LOAD || access_type == STORE)) {
+            // When MPRV=0, loads and stores behave as normal, using the translation and protection mechanisms
+            // of the current privilege mode. When MPRV=1, load and store memory addresses are translated and
+            // protected as though the current privilege mode were set to MPP.
+            pri_mode = mstatus.bits.mpp;
+        }
+        if (satp >> 31 && pri_mode < 3) {
+            // SV32
+            // Get VPNs in the virtual address.
+            uint32_t vpn[2];
+            vpn[0] = v_addr >> 12 & 0x3ff;  // VPN[0]
+            vpn[1] = v_addr >> 22 & 0x3ff;  // VPN[1]
+
+            // Get root page table stored in satp.
+            uint32_t ppn = satp & 0x3fffff;     // PPN in satp register.
+            uint32_t pte_addr = ppn << 12;
+
+            // Find page.
+            bool page_found = false;
+            uint32_t pte = 0;
+            int i = 1;
+            while (i >= 0) {
+                try {
+                    pte = bus->read(pte_addr + (vpn[i] << 2), 4);
+                } catch ([[maybe_unused]] std::runtime_error& e) {
+                    throw Trap(ACCESS_FAULT[access_type], v_addr);
+                }
+
+                const uint8_t v = pte & 1;
+                const uint8_t r = pte >> 1 & 1;
+                const uint8_t w = pte >> 2 & 1;
+                const uint8_t x = pte >> 3 & 1;
+                const uint8_t u = pte >> 4 & 1;
+                const uint8_t a = pte >> 6 & 1;
+                const uint8_t d = pte >> 7 & 1;
+
+                // Valid page check.
+                if (v == 0 || (r == 0 && w == 1)) throw Trap(PAGE_FAULT[access_type], v_addr);
+
+                if (r == 1 || x == 1) {
+                    page_found = true;
+
+                    // Privilege Check.
+                    if (pri_mode == 0 && u == 0 || pri_mode == 1 && mstatus.bits.sum == 0 && u == 1) {
+                        throw Trap(PAGE_FAULT[access_type], v_addr);
+                    }
+
+                    // Permission Check
+                    if (access_type == FETCH && x == 0
+                            || access_type == LOAD && !(r == 1 || mstatus.bits.mxr == 1)
+                            || (access_type == STORE || access_type == AMO) && w == 0) {
+                        throw Trap(PAGE_FAULT[access_type], v_addr);
+                    }
+
+                    // A/D Bits Check
+                    if (a == 0 || (d == 0 && (access_type == STORE || access_type == AMO))) {
+                        throw Trap(PAGE_FAULT[access_type], v_addr);
+                    }
+
+                    // Superpage 4M alignment check.
+                    if (i > 0 && pte >> 10 & 0x3ff) throw Trap(PAGE_FAULT[access_type], v_addr);
+
+                    break;
+                }
+
+                ppn = pte >> 10 & 0x3fffff;
+                pte_addr = ppn << 12;
+                i -= 1;
+            }
+            if (page_found) {
+                uint32_t offset = v_addr & 0xfff;
+
+                if (i == 0) {
+                    ppn = pte >> 10 & 0x3fffff;
+                    return ppn << 12 | offset;
+                }
+                ppn = pte >> 20 & 0x3ff;
+                return ppn << 22 | vpn[0] << 12 | offset;
+            }
+            throw Trap(PAGE_FAULT[access_type], v_addr);
+        }
+        return v_addr;
+}
+
+uint32_t Cpu::read_mem(const uint32_t addr, const uint32_t n_bytes, const AccessType access_type) const {
+    uint32_t p_addr = mmu(addr, access_type);
+    uint32_t data = 0;
+    try {
+        data = bus->read(p_addr, n_bytes);
+    } catch ([[maybe_unused]] std::runtime_error& e) {
+        uint32_t cause = 5;
+        if (access_type == FETCH) cause = 1;
+        else if (access_type == AMO) cause = 7;
+        throw Trap(cause, addr);
+    }
+    return data;
+}
+
+void Cpu::write_mem(const uint32_t addr, const uint32_t n_bytes, const uint32_t data) const {
+    uint32_t p_addr = mmu(addr, STORE);
+
+    try {
+        bus->write(p_addr, n_bytes, data);
+    } catch ([[maybe_unused]] std::runtime_error& e) {
+        throw Trap(7, addr);
+    }
+}
+
+
 void Cpu::execute() {
 
     /* STEP1: fetch instruction. */
-    const uint32_t inst = bus->read(pc, 4);
+    const uint32_t inst = read_mem(pc, 4, FETCH);
+
+    cur_inst = inst;       // ★ 记录当前指令
+    inst_traced = false;   // ★ 本指令尚未打印 trace
 
     /* STEP2: decode instruction. */
     // ----------------------------- Instruction format ------------------------------
@@ -306,7 +506,7 @@ void Cpu::execute() {
             if ((funct3 & 3) != 3) {
                 const uint8_t n_bytes = 1 << (funct3 & 0x3);        // Get byte number.
                 const uint32_t addr = src1 + imm_i;                 // Get address.
-                const uint32_t data = bus->read(addr , n_bytes);    // Load data.
+                const uint32_t data = read_mem(addr , n_bytes, LOAD);    // Load data.
                 if (rd != 0) reg[rd] = funct3 & 0x4? data : signed_extend(data, n_bytes << 3);
                 if (trace) {
                     op = n_bytes == 1? "lb" : n_bytes == 2? "lh" : "lw";
@@ -321,7 +521,7 @@ void Cpu::execute() {
             if ((funct3 & 3) != 3) {
                 const uint8_t n_bytes = 1 << (funct3 & 0x3);        // Get byte number.
                 const uint32_t addr = src1 + imm_s;                 // Get address.
-                bus->write(addr, n_bytes, src2);
+                write_mem(addr, n_bytes, src2);
                 if (trace) {
                     op = n_bytes == 1? "sb" : n_bytes == 2? "sh" : "sw";
                     printf("%08x: %08x \t %s %s, %d(%s) # %08x <- %08x\n",
@@ -363,20 +563,27 @@ void Cpu::execute() {
             if (trace) {
                 printf("%08x: %08x \t %s %s, %s, %d # %08x\n",
                     pc, inst, op.c_str(), REG[rs1], REG[rs2], static_cast<int32_t>(imm_b), next_pc);
+                inst_traced = true;
             }
             break;
         }
         case 0x6f:  // JAL
             next_pc = pc + imm_j;
-            reg[rd] = pc + 4;
-            if (trace) printf("%08x: %08x \t jal %s, %d # %08x\n",
-                pc, inst, REG[rd], static_cast<int32_t>(imm_j), next_pc);
+            if ((next_pc & 0x3) == 0) reg[rd] = pc + 4;   // ★ 非对齐不写 rd
+            if (trace) {
+                printf("%08x: %08x \t jal %s, %d # %08x\n",
+                    pc, inst, REG[rd], static_cast<int32_t>(imm_j), next_pc);
+                inst_traced = true;
+            }
             break;
         case 0x67:  // JALR
-            next_pc = src1 + imm_i & ~1;
-            reg[rd] = pc + 4;
-            if (trace) printf("%08x: %08x \t jal %s, %d(%s) # %08x\n",
-                pc, inst, REG[rd], static_cast<int32_t>(imm_j), REG[rs1], next_pc);
+            next_pc = (src1 + imm_i) & ~1u;
+            if ((next_pc & 0x3) == 0) reg[rd] = pc + 4;   // ★ 非对齐不写 rd
+            if (trace) {
+                printf("%08x: %08x \t jal %s, %d(%s) # %08x\n",
+                    pc, inst, REG[rd], static_cast<int32_t>(imm_i), REG[rs1], next_pc);
+                inst_traced = true;   // ★ 已打印，异常时不再补 exc 行
+            }
             break;
         case 0x37:  // LUI
             reg[rd] = imm_u;
@@ -390,10 +597,10 @@ void Cpu::execute() {
             if (funct3 == 0) {
                 switch (inst) {
                     case 0x00000073:  // ECALL
-                        if (trace) printf("%08x: %08x \t ecall\n", pc, inst);
+                        if (trace) { printf("%08x: %08x \t ecall \t # %08x\n", pc, inst, pc); inst_traced = true; }
                         throw Trap(8 + privilege, pc);
                     case 0x00100073:  // EBREAK
-                        if (trace) printf("%08x: %08x \t ebreak\n", pc, inst);
+                        if (trace) { printf("%08x: %08x \t ebreak \t # %08x\n", pc, inst, pc); inst_traced = true; }
                         throw Trap(3, pc);
                     case 0x30200073:  // MRET
                         privilege = mstatus.bits.mpp;           // Privilege mode is changed to MPP.
@@ -404,13 +611,23 @@ void Cpu::execute() {
                         if (trace) op = "mret";
                         break;
                     case 0x10200073:  // SRET
+                        // ★ 与 V2 一致：TSR=1 且当前为 S 模式 → illegal
+                        if (privilege == 1 && mstatus.bits.tsr) throw Trap(2, inst);
+                        privilege        = mstatus.bits.spp;   // 特权级 ← SPP
+                        mstatus.bits.sie  = mstatus.bits.spie; // SIE ← SPIE
+                        mstatus.bits.spie = 1;                 // SPIE ← 1
+                        mstatus.bits.spp  = 0;                 // SPP ← U 模式
+                        next_pc = sepc & ~3u;                  // PC ← sepc
                         if (trace) op = "sret";
                         break;
                     case 0x10500073:  // WFI
                         if (trace) op = "wfi";
                         break;
                     default:
-                        throw Trap(2, inst);
+                        if (rd == 0 && funct7 == 9) {  // SFENCE.VMA
+                            if (privilege == 1 && mstatus.bits.tvm) throw Trap(2, inst);
+                            if (trace) op = "sfence.vma";
+                        } else throw Trap(2, inst);
                 }
                 if (trace) printf("%08x: %08x \t %s\n", pc, inst, op.c_str());
             } else {
@@ -461,9 +678,8 @@ void Cpu::execute() {
         }
         case 0x2f:  // Atomic instructions.
             if (funct3 == 2) {
-                uint8_t funct5 = funct7 >> 2;
-                if ((funct5 & 0x3) == 0) {
-                    uint32_t old_val = bus->read(src1, 4);
+                if (uint8_t funct5 = funct7 >> 2; (funct5 & 0x3) == 0) {
+                    uint32_t old_val = read_mem(src1, 4, AMO);
                     uint32_t new_val;
                     switch (funct5 >> 2) {
                         case 0:  // AMOADD.W
@@ -501,25 +717,25 @@ void Cpu::execute() {
                         default:
                             throw Trap(2, inst);
                     }
-                    bus->write(src1, 4, new_val);
+                    write_mem(src1, 4, new_val);
                     if (rd != 0) reg[rd] = old_val;
                     if (trace) printf("%08x: %08x \t %s %s, %s, (%s)\n",
                         pc, inst, op.c_str(), REG[rd], REG[rs2], REG[rs1]);
                 } else if (funct5 == 1) {  // AMOSWAP.W
-                    uint32_t old_val = bus->read(src1, 4);
-                    bus->write(src1, 4, src2);
+                    uint32_t old_val = read_mem(src1, 4, AMO);
+                    write_mem(src1, 4, src2);
                     if (rd != 0) reg[rd] = old_val;
                     if (trace) printf("%08x: %08x \t amoswap.w %s, %s, (%s)\n",
                         pc, inst, REG[rd], REG[rs2], REG[rs1]);
                 } else if (funct5 == 2) {  // LR.W
-                    uint32_t old_val = bus->read(src1, 4);
+                    uint32_t old_val = read_mem(src1, 4, AMO);
                     if (rd != 0) reg[rd] = old_val;
                     if (!reserve) reserve = true;
                     if (trace) printf("%08x: %08x \t lr.w %s, %s, (%s)\n",
                         pc, inst, REG[rd], REG[rs2], REG[rs1]);
                 } else if (funct5 == 3) {  // SC.W
                     if (reserve) {
-                        bus->write(src1, 4, src2);
+                        write_mem(src1, 4, src2);
                         reg[rd] = 0;
                         reserve = false;
                     } else {
@@ -535,9 +751,9 @@ void Cpu::execute() {
             }
             break;
         case 0xf:
-            if (funct3 == 0) {
+            if (funct3 == 0) {  // FENCE
                 op = "fence";
-            } else if (funct3 == 1) {
+            } else if (funct3 == 1) {  // FENCE.I
                 op = "fencei";
             } else {
                 throw Trap(2, inst);
@@ -548,21 +764,57 @@ void Cpu::execute() {
             throw Trap(2, inst);  // Illegal instruction.
     }
 
-    /* STEP4: update PC. */
+    /* STEP4: 取指地址对齐检查（RISC-V 规范：非 4 字节对齐 → cause=0）*/
+    if (next_pc & 0x3) {
+        throw Trap(0, next_pc);   // Instruction address misaligned
+    }
+
+    /* STEP5: update PC. */
     pc = next_pc;
     reg[0] = 0; // Reset zero.
 }
 
 void Cpu::handle_exception(const Trap& trap) {
-    if (trace) printf("Trap %x: %x, %x\n", pc, trap.cause, trap.value);
-    mstatus.bits.mpp = privilege;           // Set MPP to current mode.
-    privilege = 3;                          // Set privilege to M-mode.
-    mepc = pc;                              // Save current PC in mepc.
-    mcause = trap.cause;                    // Set mcause to exception code.
-    mtval = trap.value;                     // Set mtval to trap value.
-    mstatus.bits.mpie = mstatus.bits.mie;   // MIE is stored to MPIE.
-    mstatus.bits.mie = 0;                   // Clear up MIE.
-    pc = mtvec & 0xfffffffc;
+    if (trace) {
+        // ★ 与 V2 对齐：只有指令本体还没打印过 trace 时才补 exc 行
+        //   （ecall/ebreak 已自己打印；页错误在 load/store 内部抛出，来不及打印）
+        if (!inst_traced)
+            printf("%08x: %08x \t exc \t # %08x\n", pc, cur_inst, trap.cause);
+        printf("Trap %x: %x, %x\n", pc, trap.cause, trap.value);
+    }
+
+    const uint32_t cause = trap.cause;
+
+    // ★ 中断（cause bit31=1）→ 查 mideleg；同步异常 → 查 medeleg
+    bool delegated;
+    if (cause & 0x80000000u) {
+        delegated = (privilege <= 1) && ((mideleg >> (cause & 0x7fffffffu)) & 1);
+    } else {
+        delegated = (privilege <= 1) && (cause < 32) && ((medeleg >> cause) & 1);
+    }
+
+    if (delegated) {
+        // ---- 交给 S 模式 ----
+        mstatus.bits.spp  = privilege;          // SPP ← 当前模式
+        privilege         = 1;                  // 进入 S 模式
+        sepc              = pc;
+        scause            = cause;
+        stval             = trap.value;
+        mstatus.bits.spie = mstatus.bits.sie;   // SPIE ← SIE
+        mstatus.bits.sie  = 0;
+        // stvec 低 2 位 = 0 → Direct，= 1 → Vectored
+        pc = (stvec & ~3u) + ((stvec & 0x3) == 1 ? (cause << 2) : 0);
+    } else {
+        // ---- 交给 M 模式 ----
+        mstatus.bits.mpp  = privilege;
+        privilege         = 3;
+        mepc              = pc;
+        mcause            = cause;
+        mtval             = trap.value;
+        mstatus.bits.mpie = mstatus.bits.mie;
+        mstatus.bits.mie  = 0;
+        pc = (mtvec & ~3u) + ((mtvec & 0x3) == 1 ? (cause << 2) : 0);
+    }
 }
 
 void Cpu::run() {

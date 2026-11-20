@@ -7,7 +7,7 @@
 #include <map>
 #include <string>
 
-#include "Bus.h"
+#include "bus.h"
 
 union mstatus_t {
     uint32_t value;             // 32-bit raw register value

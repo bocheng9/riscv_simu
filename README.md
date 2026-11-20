@@ -124,3 +124,70 @@ Boot it with:
 ```sh
 ./v3sim --linux --payload images/fw_payload.bin --dtb images/virt.dtb
 ```
+
+Type `root` at the `rvsimu login:` prompt to get a shell. The console uses
+CR (0x0D) as the line terminator, as a serial terminal does.
+
+## Rebuilding the root filesystem
+
+The rootfs is produced by Buildroot. Both the configuration and the post
+processing are in `rootfs/`:
+
+```
+rootfs/buildroot_defconfig       Buildroot configuration
+rootfs/busybox-no-pie.config     busybox fragment (static, no PIE)
+rootfs/mkpayload.py              packs the rootfs back into images/fw_payload.bin
+```
+
+### 1. Build the toolchain and rootfs
+
+```sh
+git clone https://github.com/buildroot/buildroot.git
+cd buildroot
+git checkout 2024.02.9
+
+cp <this repo>/rootfs/buildroot_defconfig configs/rv32ima_defconfig
+cp <this repo>/rootfs/busybox-no-pie.config package/busybox/no-pie.config
+
+make rv32ima_defconfig
+make            # the toolchain build dominates the time; expect a few hours
+```
+
+The resulting rootfs is `output/images/rootfs.cpio.gz`.
+
+Two settings matter more than the rest and are easy to get wrong:
+
+* The target must be `BR2_riscv_custom`, not the default General purpose (G)
+  variant. The G variant force-selects the F and D extensions, which this
+  simulator does not implement.
+* busybox must be built static and without PIE (`BR2_PIC_PIE` off plus
+  `CONFIG_STATIC=y`). The default build is position independent, which needs
+  relocations at load time that the kernel on this target does not perform.
+
+Buildroot installs no character devices under `dev/`; it expects devtmpfs to
+populate the directory at boot. The kernel opens `/dev/console` before that
+mount happens, so the packing step adds those nodes explicitly.
+
+### 2. Pack it into the payload
+
+```sh
+python3 rootfs/mkpayload.py images/fw_payload.bin \
+        output/images/rootfs.cpio.gz images/fw_payload.new.bin
+```
+
+`mkpayload.py` replaces the initramfs inside the existing payload, so the
+OpenSBI and kernel images stay untouched. It performs the steps the boot
+sequence depends on:
+
+| Step | Why |
+|---|---|
+| Drop `lib/`, `lib32/`, `usr/lib/` | busybox is static, and the shared objects would not fit the slot |
+| Add `dev/console`, `dev/null`, `dev/tty`, `dev/zero` | the kernel opens `/dev/console` before devtmpfs is mounted |
+| Make `/init` a hard link of `bin/busybox` | buildroot installs it as a two-step symlink; a hard link shares the inode and saves the second copy |
+| Recompress at level 9 with `mtime=0` | the stream must be plain gzip with no FEXTRA field and a stable length |
+
+Two constraints come out of the image format and are worth repeating: the new
+gzip stream may not be longer than the original one, and it must be plain
+gzip. The in-kernel decompressor used here rejects the FEXTRA field, so any
+padding has to go after the stream rather than inside it. The script checks
+both and refuses to write a payload that would not boot.

@@ -62,11 +62,11 @@ protected:
     uint32_t medeleg;
     uint32_t mideleg;
 
-    /* PMP（当前仅实现 CSR 存储，暂不做权限拦截）*/
+    /* PMP (CSR storage only, no permission checks yet) */
     uint32_t pmpcfg[4]  = {0, 0, 0, 0};
     uint32_t pmpaddr[16] = {0};
 
-    /* 调试触发器（0x7A0-0x7BF，共 32 个）：当前仅做 CSR 存储 */
+    /* Debug triggers (0x7A0-0x7BF, 32 of them): CSR storage only */
     uint32_t tdata[32] = {0};
     uint32_t mie;
     uint32_t mtvec;
@@ -78,13 +78,13 @@ protected:
     uint32_t mcycle;
     uint32_t mcycleh;
 
-    /* 实时时钟（由 CLINT 每步推入），供 time/timeh CSR 读取 */
+    /* Wall clock pushed in by CLINT every step, read by time/timeh CSRs */
     uint64_t mtime = 0;
 
-    /* 已退休指令计数（instret/instreth 的计数基础）*/
+    /* Retired instruction counter (backing store for instret/instreth) */
     uint64_t instret_cnt = 0;
 
-    /* 本条指令刚写过 minstret，用于抑制本次自增 */
+    /* Set when this instruction wrote minstret, suppresses its own increment */
     bool instret_written = false;
 
     uint32_t stvec;
@@ -100,9 +100,9 @@ protected:
 
     /* Execute one instruction at a time. */
     bool trace;
-    uint32_t cur_inst = 0;   // ★ 当前指令（供异常 trace 补行用）
-    bool inst_traced = false; // ★ 本指令是否已打印过 trace
-    uint32_t last_exc_pc = 0xFFFFFFFF; // ★ 上次异常发生的 PC
+    uint32_t cur_inst = 0;    // current instruction (used to emit exception trace)
+    bool inst_traced = false; // whether this instruction was already traced
+    uint32_t last_exc_pc = 0xFFFFFFFF; // PC of the last exception
     void execute();
     void throw_illegal();
 
@@ -112,13 +112,13 @@ protected:
 public:
     Cpu();
 
-    /* 由外部（CLINT）每步调用：更新实时时钟 */
+    /* Called by CLINT every step: refresh the wall clock */
     void update_time(uint64_t t) { mtime = t; }
 
-    /* 当前 PC（供调试输出）*/
+    /* Current PC (for debugging output) */
     [[nodiscard]] uint32_t get_pc() const { return pc; }
 
-    /* 设置启动上下文（OpenSBI 约定：a0=hartid, a1=dtb 物理地址）*/
+    /* Set boot context (OpenSBI convention: a0=hartid, a1=DTB physical address) */
     void set_boot_context(uint32_t hartid, uint32_t dtb_addr) {
         reg[10] = hartid;
         reg[11] = dtb_addr;

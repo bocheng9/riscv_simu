@@ -59,7 +59,7 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
         case 0x302:  // medeleg
             val = medeleg;
             break;
-        // 调试触发器 CSR（0x7A0-0x7BF）
+        // Debug trigger CSRs (0x7A0-0x7BF)
         case 0x7a0: case 0x7a1: case 0x7a2: case 0x7a3:
         case 0x7a4: case 0x7a5: case 0x7a6: case 0x7a7:
         case 0x7a8: case 0x7a9: case 0x7aa: case 0x7ab:
@@ -70,12 +70,12 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
         case 0x7bc: case 0x7bd: case 0x7be: case 0x7bf:
             val = tdata[addr & 0x1f];
             break;
-        // PMP 配置寄存器（0x3A0-0x3A3，RV32 只有 4 个）
+        // PMP configuration registers (0x3A0-0x3A3, only 4 on RV32)
         case 0x3a0: val = pmpcfg[0]; break;
         case 0x3a1: val = pmpcfg[1]; break;
         case 0x3a2: val = pmpcfg[2]; break;
         case 0x3a3: val = pmpcfg[3]; break;
-        // PMP 地址寄存器（0x3B0-0x3BF，共 16 个）
+        // PMP address registers (0x3B0-0x3BF, 16 in total)
         case 0x3b0: val = pmpaddr[0];  break;
         case 0x3b1: val = pmpaddr[1];  break;
         case 0x3b2: val = pmpaddr[2];  break;
@@ -116,7 +116,7 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
         case 0x344:  // mip
             val = mip;
             break;
-        // ---- 计数器 ----
+        // ---- Counters ----
         case 0xb00: val = mcycle;                 break;  // mcycle
         case 0xb80: val = mcycleh;                break;  // mcycleh
         case 0xb02: val = static_cast<uint32_t>(instret_cnt & 0xffffffff);        break;
@@ -169,7 +169,7 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
         case 0x302:  // medeleg
             medeleg = val;
             break;
-        // 调试触发器 CSR（0x7A0-0x7BF）
+        // Debug trigger CSRs (0x7A0-0x7BF)
         case 0x7a0: case 0x7a1: case 0x7a2: case 0x7a3:
         case 0x7a4: case 0x7a5: case 0x7a6: case 0x7a7:
         case 0x7a8: case 0x7a9: case 0x7aa: case 0x7ab:
@@ -180,12 +180,12 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
         case 0x7bc: case 0x7bd: case 0x7be: case 0x7bf:
             tdata[addr & 0x1f] = val;
             break;
-        // PMP 配置寄存器（只保留低 8 位有效字段）
+        // PMP configuration registers (keep only the low 8 valid bits)
         case 0x3a0: pmpcfg[0] = val & 0xFFu; break;
         case 0x3a1: pmpcfg[1] = val & 0xFFu; break;
         case 0x3a2: pmpcfg[2] = val & 0xFFu; break;
         case 0x3a3: pmpcfg[3] = val & 0xFFu; break;
-        // PMP 地址寄存器
+        // PMP address registers
         case 0x3b0: pmpaddr[0]  = val; break;
         case 0x3b1: pmpaddr[1]  = val; break;
         case 0x3b2: pmpaddr[2]  = val; break;
@@ -226,7 +226,7 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
         case 0x344:  // mip
             mip = val;
             break;
-        // ---- 计数器（可写，OpenSBI 会初始化）----
+        // ---- Counters (writable; OpenSBI initialises them) ----
         case 0xb00: mcycle = val; break;
         case 0xb80: mcycleh = val; break;
         case 0xb02:
@@ -408,10 +408,11 @@ void Cpu::throw_illegal() {
 }
 
 void Cpu::execute() {
-    /* STEP -1: 硬件断点判定
-     *   mcontrol（type=2）：按 tdata1 的使能位与访存类型判断是否在 tdata2 处触发
-     *   action=4 → breakpoint 异常（cause = 3）
-     *   kind: 0=取指, 1=load, 2=store
+    /* STEP -1: hardware breakpoint check
+     *   mcontrol (type=2): use the enable bits and access type in tdata1
+     *   to decide whether the access at tdata2 triggers
+     *   action=4 -> breakpoint exception (cause = 3)
+     *   kind: 0=fetch, 1=load, 2=store
      */
     auto bp_hit = [&](const uint32_t vaddr, const int kind) -> bool {
         const uint32_t td1    = tdata[1];
@@ -427,7 +428,7 @@ void Cpu::execute() {
         const bool load_b  = td1 & 1;
 
         if (dmode || chain || type != 2 || match != 0) return false;
-        if (action != 0 && action != 4) return false;   // 0=breakpoint, 4=breakpoint（两种编码）
+        if (action != 0 && action != 4) return false;   // 0=breakpoint, 4=breakpoint (two encodings)
         if (!((privilege == 3 && m_bit) || (privilege == 0 && u_bit))) return false;
 
         const bool kind_ok =
@@ -443,7 +444,7 @@ void Cpu::execute() {
         throw Trap(3, pc);
     }
 
-    /* STEP0: 中断检查（在指令执行前，mepc = 当前 pc 即下一条待执行指令）*/
+    /* STEP0: interrupt check (before execution; mepc = current pc = next instruction) */
     {
         const uint32_t pending = mip & mie;
         if (pending != 0) {
@@ -459,18 +460,18 @@ void Cpu::execute() {
     }
 
 
-    // 取指地址对齐检查：RVC 要求 2 字节对齐（无 C 扩展时才要求 4 字节）
+    // Fetch alignment check: RVC requires 2-byte alignment (4 bytes only without C)
     if (pc & 0x1) {
-        throw Trap(0, pc);   // 指令地址非对齐
+        throw Trap(0, pc);   // instruction address misaligned
     }
 
     /* STEP1: fetch instruction. */
-    uint32_t inst     = 0;   // 展开后的 32 位指令
-    uint32_t inst_len = 4;   // 原始指令长度（2 或 4）
+    uint32_t inst     = 0;   // expanded 32-bit instruction
+    uint32_t inst_len = 4;   // original instruction length (2 or 4)
     const uint32_t raw = read_mem(pc & ~3u, 4, FETCH);
     const uint32_t half = (pc & 0x2) ? (raw >> 16) : (raw & 0xffff);
 
-    // 判断是否为 16 位压缩指令（低 2 位 != 11）
+    // Detect a 16-bit compressed instruction (low 2 bits != 11)
     const bool is_rvc = (half & 0x3) != 0x3;
     if (is_rvc) {
         const uint32_t expanded = rvc_expand(static_cast<uint16_t>(half));
@@ -489,8 +490,8 @@ void Cpu::execute() {
         inst_len = 4;
     }
 
-    cur_inst = inst;       // ★ 记录当前指令
-    inst_traced = false;   // ★ 本指令尚未打印 trace
+    cur_inst = inst;       // record the current instruction
+    inst_traced = false;   // this instruction has not been traced yet
 
     /* STEP2: decode instruction. */
     // ----------------------------- Instruction format ------------------------------
@@ -749,7 +750,7 @@ void Cpu::execute() {
         }
         case 0x6f:  // JAL
             next_pc = pc + imm_j;
-            if ((next_pc & 0x1) == 0) reg[rd] = pc + inst_len;   // ★ 返回地址按原指令长度
+            if ((next_pc & 0x1) == 0) reg[rd] = pc + inst_len;   // return address uses the original length
             if (trace) {
                 printf("%08x: %08x \t jal %s, %d # %08x\n",
                     pc, inst, REG[rd], static_cast<int32_t>(imm_j), next_pc);
@@ -758,11 +759,11 @@ void Cpu::execute() {
             break;
         case 0x67:  // JALR
             next_pc = (src1 + imm_i) & ~1u;
-            if ((next_pc & 0x1) == 0) reg[rd] = pc + inst_len;   // ★ 返回地址按原指令长度
+            if ((next_pc & 0x1) == 0) reg[rd] = pc + inst_len;   // return address uses the original length
             if (trace) {
                 printf("%08x: %08x \t jal %s, %d(%s) # %08x\n",
                     pc, inst, REG[rd], static_cast<int32_t>(imm_i), REG[rs1], next_pc);
-                inst_traced = true;   // ★ 已打印，异常时不再补 exc 行
+                inst_traced = true;   // already traced, do not emit an extra exc line
             }
             break;
         case 0x37:  // LUI
@@ -791,12 +792,12 @@ void Cpu::execute() {
                         if (trace) op = "mret";
                         break;
                     case 0x10200073:  // SRET
-                        // ★ 与 V2 一致：TSR=1 且当前为 S 模式 → illegal
+                        // Same as the reference model: TSR=1 and in S-mode -> illegal
                         if (privilege == 1 && mstatus.bits.tsr) throw_illegal();
-                        privilege        = mstatus.bits.spp;   // 特权级 ← SPP
+                        privilege        = mstatus.bits.spp;   // privilege <- SPP
                         mstatus.bits.sie  = mstatus.bits.spie; // SIE ← SPIE
                         mstatus.bits.spie = 1;                 // SPIE ← 1
-                        mstatus.bits.spp  = 0;                 // SPP ← U 模式
+                        mstatus.bits.spp  = 0;                 // SPP <- U-mode
                         next_pc = sepc & ~1u;                  // PC ← sepc
                         if (trace) op = "sret";
                         break;
@@ -813,7 +814,7 @@ void Cpu::execute() {
             } else {
                 uint16_t addr = imm_i & 0xfff;
 
-                // ★ 只读 CSR（cycle/time/instret 及其高位）：任何写操作都非法
+                // Read-only CSRs (cycle/time/instret and their high halves): any write is illegal
                 const bool csr_writes = (funct3 == 1 || funct3 == 4 || rs1 != 0);
                 if (csr_writes &&
                     (addr == 0xc00 || addr == 0xc01 || addr == 0xc02 ||
@@ -821,12 +822,12 @@ void Cpu::execute() {
                     throw_illegal();
                 }
 
-                // ★ 特权检查：CSR 地址的 [9:8] 位大于当前特权级 → 非法
+                // Privilege check: CSR address bits [9:8] above the current level -> illegal
                 if (((addr >> 8) & 3) > privilege) {
                     throw_illegal();
                 }
 
-                // ★ TVM=1 时，S 模式读写 satp → 非法
+                // With TVM=1, S-mode reads/writes of satp -> illegal
                 if (privilege == 1 && mstatus.bits.tvm && addr == 0x180) {
                     throw_illegal();
                 }
@@ -960,7 +961,7 @@ void Cpu::execute() {
             if (trace) printf("%08x: %08x \t %s\n", pc, inst, op.c_str());
             break;
         default:
-            // ★ 非法指令也要打印标准 trace 行（与 V2 一致），否则轨迹错位
+            // Illegal instructions must also emit a standard trace line, otherwise traces desync
             if (trace) {
                 printf("%08x: %08x \t illegal \t # %08x\n", pc, inst, pc);
                 inst_traced = true;
@@ -968,8 +969,8 @@ void Cpu::execute() {
             throw_illegal();  // Illegal instruction.
     }
 
-    /* STEP4: 取指地址对齐检查（RISC-V 规范：非 4 字节对齐 → cause=0）*/
-    // 有 C 扩展时跳转目标只需 2 字节对齐
+    /* STEP4: target alignment check (RISC-V: misaligned target -> cause=0) */
+    // With the C extension a jump target only needs 2-byte alignment
     if (next_pc & 0x1) {
         throw Trap(0, next_pc);   // Instruction address misaligned
     }
@@ -978,9 +979,10 @@ void Cpu::execute() {
     pc = next_pc;
     reg[0] = 0; // Reset zero.
 
-    /* STEP5.1: 计数器递增
-     *   ★ 若本条指令写过 minstret/minstret h（0xB02/0xB82），
-     *     则本次自增被抑制——规范要求 csrw minstret 后立即读到所写值。
+    /* STEP5.1: counter increment
+     *   If this instruction wrote minstret / minstreth (0xB02/0xB82) the
+     *   increment is suppressed: the spec requires that a csrw minstret is
+     *   followed immediately by reading back the written value.
      */
     mcycle += 1;
     if (!instret_written) {
@@ -992,8 +994,8 @@ void Cpu::execute() {
 
 void Cpu::handle_exception(const Trap& trap) {
     if (trace) {
-        // ★ 与 V2 对齐：只有指令本体还没打印过 trace 时才补 exc 行
-        //   （ecall/ebreak 已自己打印；页错误在 load/store 内部抛出，来不及打印）
+        // Only emit an extra exc line when the instruction itself was not traced
+        //   (ecall/ebreak trace themselves; page faults are raised inside load/store)
         if (!inst_traced)
             printf("%08x: %08x \t exc \t # %08x\n", pc, cur_inst, trap.cause);
         printf("Trap %x: %x, %x\n", pc, trap.cause, trap.value);
@@ -1001,7 +1003,7 @@ void Cpu::handle_exception(const Trap& trap) {
 
     const uint32_t cause = trap.cause;
 
-    // ★ 中断（cause bit31=1）→ 查 mideleg；同步异常 → 查 medeleg
+    // Interrupt (cause bit31=1) -> check mideleg; synchronous exception -> medeleg
     bool delegated;
     if (cause & 0x80000000u) {
         delegated = (privilege <= 1) && ((mideleg >> (cause & 0x7fffffffu)) & 1);
@@ -1010,21 +1012,21 @@ void Cpu::handle_exception(const Trap& trap) {
     }
 
     if (delegated) {
-        // ---- 交给 S 模式 ----
-        mstatus.bits.spp  = privilege;          // SPP ← 当前模式
-        privilege         = 1;                  // 进入 S 模式
+        // ---- Delegated to S-mode ----
+        mstatus.bits.spp  = privilege;          // SPP <- current mode
+        privilege         = 1;                  // enter S-mode
         sepc              = pc;
         scause            = cause;
         stval             = trap.value;
         mstatus.bits.spie = mstatus.bits.sie;   // SPIE ← SIE
         mstatus.bits.sie  = 0;
-        // stvec 低 2 位 = 0 → Direct，= 1 → Vectored
-        // ★ Vectored 仅对【中断】生效；同步异常（cause 最高位=0）不偏移
+        // stvec low 2 bits: 0 -> Direct, 1 -> Vectored
+        // Vectored applies to interrupts only; synchronous exceptions are not offset
         pc = (stvec & ~3u) +
              (((stvec & 0x3) == 1 && (cause & 0x80000000u))
                 ? ((cause & 0x7fffffffu) << 2) : 0);
     } else {
-        // ---- 交给 M 模式 ----
+        // ---- Delegated to M-mode ----
         mstatus.bits.mpp  = privilege;
         privilege         = 3;
         mepc              = pc;

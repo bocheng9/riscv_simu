@@ -1,15 +1,16 @@
 //
-// rvc.cpp — RV32C 压缩指令展开
+// rvc.cpp — RV32C compressed instruction expansion
 //
-// 参考 RISC-V 非特权规范 Volume I: Unprivileged ISA, Chapter 16 "C Standard Extension"
-// 全部展开为等价 32 位指令，便于复用现有 32 位译码器。
+// Reference: RISC-V Unprivileged ISA, Volume I, Chapter 16 "C Standard Extension"
+// Everything is expanded to equivalent 32-bit instructions so the
+// existing 32-bit decoder can be reused.
 //
 
 #include "rvc.h"
 
 namespace {
 
-/* 常用编码片段 */
+/* Common encoding helpers */
 inline uint32_t enc_i(uint32_t imm, uint32_t rs1, uint32_t f3, uint32_t rd, uint32_t op) {
     return ((imm & 0xfff) << 20) | ((rs1 & 0x1f) << 15) | ((f3 & 7) << 12)
          | ((rd & 0x1f) << 7) | (op & 0x7f);
@@ -38,7 +39,7 @@ inline uint32_t enc_u(uint32_t imm20, uint32_t rd, uint32_t op) {
     return ((imm20 & 0xfffff) << 12) | ((rd & 0x1f) << 7) | (op & 0x7f);
 }
 
-/* 符号扩展辅助 */
+/* Sign-extension helpers */
 inline int32_t sext(uint32_t v, int bits) {
     const uint32_t sign = 1u << (bits - 1);
     return static_cast<int32_t>((v ^ sign) - sign);
@@ -51,14 +52,14 @@ uint32_t rvc_expand(const uint16_t ci) {
     const uint32_t quad = c & 0x3;
     const uint32_t f3   = (c >> 13) & 0x7;
 
-    /* 寄存器编号（压缩格式）
-     *   rd   : bit[11:7]  —— C.ADDI/C.LI/C.LUI/C.ADDI16SP/C.SLLI/C.LWSP/C.JALR 等
-     *   rs2  : bit[6:2]   —— C.MV/C.ADD/C.SWSP 等
-     *   rd'  : bit[4:2]+8 —— CIW/CL/CS 格式
+    /* Register numbers in compressed formats
+     *   rd   : bit[11:7]  - C.ADDI / C.LI / C.LUI / C.ADDI16SP / C.SLLI / C.LWSP / C.JALR ...
+     *   rs2  : bit[6:2]   - C.MV / C.ADD / C.SWSP ...
+     *   rd'  : bit[4:2]+8 - CIW / CL / CS formats
      */
     const uint32_t rd_  = (c >> 7) & 0x1f;   // ★ bit[11:7]
     const uint32_t rs2_ = (c >> 2) & 0x1f;
-    const uint32_t rd_p = 8 + ((c >> 2) & 0x7);   // CIW/CL 的 rd'（x8..x15）
+    const uint32_t rd_p = 8 + ((c >> 2) & 0x7);   // rd' of CIW/CL formats (x8..x15)
     const uint32_t rs1_p= 8 + ((c >> 7) & 0x7);   // x8..x15
     const uint32_t rs2_p= 8 + ((c >> 2) & 0x7);
 
@@ -71,7 +72,7 @@ uint32_t rvc_expand(const uint16_t ci) {
         case 0: {   // C.ADDI4SPN → addi rd', x2, nzuimm
             const uint32_t nz = (((c >> 7) & 0xf) << 6) | (((c >> 11) & 0x3) << 4)
                               | (((c >> 5) & 0x1) << 3) | (((c >> 6) & 0x1) << 2);
-            if (nz == 0) return 0;      // 全 0 → 保留（非法）
+            if (nz == 0) return 0;      // all zero -> reserved (illegal)
             return enc_i(nz, 2, 0x0, rd_p, 0x13);
         }
         case 2: {   // C.LW → lw rd', offset(rs1')
@@ -85,7 +86,7 @@ uint32_t rvc_expand(const uint16_t ci) {
             return enc_s(off, rs2_p, rs1_p, 0x2, 0x23);
         }
         default:
-            return 0;   // C.FLD / C.FLW(64) / 保留
+            return 0;   // C.FLD / C.FLW(64) / reserved
         }
 
     //========================================================================
@@ -97,12 +98,12 @@ uint32_t rvc_expand(const uint16_t ci) {
             const int32_t imm = sext((((c >> 12) & 0x1) << 5) | ((c >> 2) & 0x1f), 6);
             if (rd_ == 0) {
                 if (imm == 0) return 0x00000013;   // c.nop
-                return 0;                          // 非零 nop → 保留
+                return 0;                          // non-zero nop -> reserved
             }
             return enc_i(static_cast<uint32_t>(imm), rd_, 0x0, rd_, 0x13);
         }
         case 1:     // C.JAL (RV32) → jal x1, offset
-                    // C.ADDIW (RV64) → 本设计为 RV32，按 C.JAL 处理
+                    // C.ADDIW (RV64) -> this design is RV32, handled as C.JAL
         {
             const int32_t imm = sext((((c >> 12) & 0x1) << 11) | (((c >> 11) & 0x1) << 4)
                                    | (((c >> 9) & 0x3) << 8) | (((c >> 8) & 0x1) << 10)
@@ -112,7 +113,7 @@ uint32_t rvc_expand(const uint16_t ci) {
         }
         case 2: {   // C.LI → addi rd, x0, imm
             const int32_t imm = sext((((c >> 12) & 0x1) << 5) | ((c >> 2) & 0x1f), 6);
-            if (rd_ == 0) return 0;   // 保留
+            if (rd_ == 0) return 0;   // reserved
             return enc_i(static_cast<uint32_t>(imm), 0, 0x0, rd_, 0x13);
         }
         case 3: {   // C.ADDI16SP (rd==2) / C.LUI
@@ -125,13 +126,13 @@ uint32_t rvc_expand(const uint16_t ci) {
                                        | (((c >> 2) & 0x1) << 5), 10);
                 return enc_i(static_cast<uint32_t>(imm), 2, 0x0, 2, 0x13);
             }
-            if (imm6 == 0) return 0;   // 保留
+            if (imm6 == 0) return 0;   // reserved
             // C.LUI → lui rd, nzimm[17:12]
             return enc_u(static_cast<uint32_t>(imm6) & 0xfffff, rd_, 0x37);
         }
-        case 4: {   // 多种（C.SRLI/C.SRAI/C.ANDI/C.SUB/C.XOR/C.OR/C.AND）
+        case 4: {   // several forms (C.SRLI/C.SRAI/C.ANDI/C.SUB/C.XOR/C.OR/C.AND)
             const uint32_t f2  = (c >> 10) & 0x3;
-            // ★ CB 格式：rd' 在 bit[9:7]，rs2' 在 bit[4:2]
+            // CB format: rd' is in bit[9:7], rs2' is in bit[4:2]
             const uint32_t rd1 = 8 + ((c >> 7) & 0x7);
             const uint32_t r2  = 8 + ((c >> 2) & 0x7);
             if (f2 == 0 || f2 == 1) {
@@ -145,11 +146,11 @@ uint32_t rvc_expand(const uint16_t ci) {
                 return enc_i(static_cast<uint32_t>(imm), rd1, 0x7, rd1, 0x13);
             }
             // f2 == 3：C.SUB / C.XOR / C.OR / C.AND
-            //   ★ 判别位是 bit[6:5]（2 位），bit12 在 RV32 下必须为 0
+            //   Discriminator is bit[6:5] (2 bits); bit12 must be 0 on RV32
             //     00=SUB  01=XOR  10=OR  11=AND
             const uint32_t b12  = (c >> 12) & 1;
             const uint32_t sel  = (c >> 5) & 0x3;
-            if (b12 != 0) return 0;      // RV32 下为保留编码
+            if (b12 != 0) return 0;      // reserved encoding on RV32
             switch (sel) {
                 case 0: return enc_r(0x20, r2, rd1, 0x0, rd1, 0x33);  // C.SUB
                 case 1: return enc_r(0x00, r2, rd1, 0x4, rd1, 0x33);  // C.XOR
@@ -218,7 +219,7 @@ uint32_t rvc_expand(const uint16_t ci) {
             return enc_s(off, rs2_, 2, 0x2, 0x23);
         }
         default:
-            return 0;   // C.FLDSP / C.FLWSP / 保留
+            return 0;   // C.FLDSP / C.FLWSP / reserved
         }
 
     default:

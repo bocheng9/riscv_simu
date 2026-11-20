@@ -1,10 +1,12 @@
 //
-// rvc.h — RVC（C 扩展）16 位压缩指令展开为 32 位指令
+// rvc.h — RVC (C extension) 16-bit compressed instruction expansion
 //
-// 设计：纯组合函数，输入 16 位压缩指令，输出等价的 32 位指令字。
-//      无法展开的编码返回 0，由上层判定为非法指令。
+// Design: a pure combinational function mapping a 16-bit compressed
+// instruction to its equivalent 32-bit instruction word.
+// Encodings that cannot be expanded return 0 and are treated as illegal.
 //
-// 覆盖 RV32C（不含 C.FLD/FLDSP/FSD/FSDSP 等浮点压缩指令）。
+// Covers RV32C (excluding floating-point forms such as
+// C.FLD / C.FLDSP / C.FSD / C.FSDSP).
 //
 
 #ifndef RVSIMU_V3_RVC_H
@@ -12,7 +14,7 @@
 
 #include <cstdint>
 
-/* 展开 16 位压缩指令；返回 0 表示非法编码 */
+/* Expand a 16-bit compressed instruction; returns 0 if the encoding is illegal */
 uint32_t rvc_expand(uint16_t c);
 
 #endif //RVSIMU_V3_RVC_H

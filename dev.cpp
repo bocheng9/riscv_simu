@@ -1,5 +1,5 @@
 //
-// dev.cpp — UART 与 CLINT 实现
+// dev.cpp — UART 16550 and CLINT implementation
 //
 
 #include <cstdio>
@@ -8,19 +8,100 @@
 #include "dev.h"
 
 /*============================================================================
- * Uart
+ * Uart — 16550A
  *============================================================================*/
 uint32_t Uart::read(const uint32_t addr, const uint32_t /*n_bytes*/) {
-    if (addr == 5) {
-        return 0x20;    // LSR: THR empty
+    const bool dlab = (lcr & 0x80) != 0;
+    uint32_t val = 0;
+
+    switch (addr) {
+    case 0:
+        if (dlab) {
+            val = dll;
+        } else {
+            /* RBR: return 0 when no data is pending, and clear rx_ready */
+            val = rx_ready ? rx_byte : 0;
+            rx_ready = false;
+        }
+        break;
+    case 1:
+        val = dlab ? dlm : ier;
+        break;
+    case 2:
+        /* IIR: bit0=0 means an interrupt is pending.
+         * Return 0x01 = no interrupt pending.
+         */
+        val = 0x01;
+        break;
+    case 3:
+        val = lcr;
+        break;
+    case 4:
+        val = mcr;
+        break;
+    case 5:
+        /* LSR: bit5=THRE (transmit holding register empty)
+         *      bit6=TEMT (transmitter empty)
+         *      Transmission completes instantly here, so both stay 1.
+         *      bit0=DR (data ready)
+         */
+        val = 0x60;
+        if (rx_ready) val |= 0x01;
+        break;
+    case 6:
+        /* MSR: bit4=CTS bit5=DSR bit6=RI bit7=DCD
+         *      Report the peer as always ready so the driver
+         *      completes its initialisation.
+         */
+        val = 0xb0;
+        break;
+    case 7:
+        val = scr;
+        break;
+    default:
+        val = 0;
+        break;
     }
-    return 0;
+
+    return val;
 }
 
 void Uart::write(const uint32_t addr, const uint32_t /*n_bytes*/, const uint32_t data) {
-    if (addr == 0) {
-        fputc(static_cast<int>(data & 0xff), stdout);
-        fflush(stdout);
+    const bool dlab = (lcr & 0x80) != 0;
+    const uint8_t b = static_cast<uint8_t>(data & 0xff);
+
+    switch (addr) {
+    case 0:
+        if (dlab) {
+            dll = b;
+        } else {
+            /* THR: emit to the terminal */
+            fputc(b, stdout);
+            fflush(stdout);
+        }
+        break;
+    case 1:
+        if (dlab) dlm = b;
+        else      ier = b;
+        break;
+    case 2:
+        fcr = b;      // FIFO control
+        break;
+    case 3:
+        lcr = b;      // line control (includes DLAB)
+        break;
+    case 4:
+        mcr = b;
+        break;
+    case 5:
+        break;        // LSR is read-only
+    case 6:
+        break;        // MSR is read-only
+    case 7:
+        scr = b;
+        break;
+    default:
+        break;
     }
 }
 

@@ -1,9 +1,9 @@
 //
-// main.cpp — 入口
+// main.cpp — entry point
 //
-// 两种运行模式：
-//   1) ISA 测试：rvsimu <elf> [--trace] [--no-isa] [--max N]
-//   2) Linux 启动：rvsimu --linux [--payload <bin>] [--dtb <dtb>] [--trace]
+// Two operating modes:
+//   1) ISA test:  rvsimu <elf> [--trace] [--no-isa] [--max N]
+//   2) Linux boot: rvsimu --linux [--payload <bin>] [--dtb <dtb>] [--trace]
 //
 
 #include <iostream>
@@ -20,10 +20,10 @@ static constexpr uint32_t UART_BASE  = 0x10000000;
 static constexpr uint32_t UART_SIZE  = 0x100;
 static constexpr uint32_t CLINT_BASE = 0x02000000;
 static constexpr uint32_t CLINT_SIZE = 0x10000;
-static constexpr uint32_t DTB_OFFSET = 0x07e00000;   // 相对于 DRAM_BASE
+static constexpr uint32_t DTB_OFFSET = 0x07e00000;   // relative to DRAM_BASE
 
 //============================================================================
-// ISA 测试模式
+// ISA test mode
 //============================================================================
 static int run_isa(const std::string& path, bool trace, bool isa_test,
                    uint64_t max_cycles) {
@@ -60,7 +60,7 @@ static int run_isa(const std::string& path, bool trace, bool isa_test,
 }
 
 //============================================================================
-// Linux 启动模式
+// Linux boot mode
 //============================================================================
 static int run_linux(const std::string& payload, const std::string& dtb,
                      bool trace, uint64_t max_cycles) {
@@ -100,12 +100,12 @@ static int run_linux(const std::string& payload, const std::string& dtb,
 }
 
 //============================================================================
-// 入口
+// Entry point
 //============================================================================
 int main(int argc, char** argv) {
     if (argc < 2) {
         fprintf(stderr,
-            "用法:\n"
+            "Usage:\n"
             "  %s <elf> [--trace] [--no-isa] [--max N]\n"
             "  %s --linux [--payload <bin>] [--dtb <dtb>] [--max N] [--trace]\n",
             argv[0], argv[0]);
@@ -125,12 +125,12 @@ int main(int argc, char** argv) {
         else if (a == "--payload" && i + 1 < argc) payload = argv[++i];
         else if (a == "--dtb" && i + 1 < argc) dtb = argv[++i];
         else if (a.rfind("--", 0) != 0) elf = a;
-        else { fprintf(stderr, "未知参数: %s\n", a.c_str()); return 3; }
+        else { fprintf(stderr, "unknown argument: %s\n", a.c_str()); return 3; }
     }
 
     try {
         if (linux_mode) return run_linux(payload, dtb, trace, max_cycles);
-        if (elf.empty()) { fprintf(stderr, "缺少 ELF 路径\n"); return 3; }
+        if (elf.empty()) { fprintf(stderr, "missing ELF path\n"); return 3; }
         return run_isa(elf, trace, isa_test, max_cycles);
     } catch (const std::exception& e) {
         fprintf(stderr, "ERROR: %s\n", e.what());

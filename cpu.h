@@ -115,6 +115,16 @@ public:
     /* Called by CLINT every step: refresh the wall clock */
     void update_time(uint64_t t) { mtime = t; }
 
+    /* External interrupt lines (UART on the virt platform).
+     * drv_uart feeds the interrupt request into mip.SEIP/MEIP. */
+    void set_ext_irq(bool active) {
+        if (active) {
+            mip |= (1u << 9) | (1u << 11);     // SEIP | MEIP
+        } else {
+            mip &= ~((1u << 9) | (1u << 11));
+        }
+    }
+
     /* Current PC (for debugging output) */
     [[nodiscard]] uint32_t get_pc() const { return pc; }
 

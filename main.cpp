@@ -13,6 +13,7 @@
 #include "bus.h"
 #include "cpu.h"
 #include "dev.h"
+#include "plic.h"
 
 static constexpr uint32_t DRAM_BASE  = 0x80000000;
 static constexpr uint32_t DRAM_SIZE  = 256u * 1024 * 1024;
@@ -20,6 +21,10 @@ static constexpr uint32_t UART_BASE  = 0x10000000;
 static constexpr uint32_t UART_SIZE  = 0x100;
 static constexpr uint32_t CLINT_BASE = 0x02000000;
 static constexpr uint32_t CLINT_SIZE = 0x10000;
+static constexpr uint32_t PLIC_BASE  = 0x0c000000;
+static constexpr uint32_t PLIC_SIZE  = 0x4000000;
+static constexpr uint32_t UART_IRQ   = 10;        // QEMU virt: serial0 = IRQ 10
+static constexpr uint32_t S_CTX      = 1;         // PLIC context 1 = hart0 S-mode
 static constexpr uint32_t DTB_OFFSET = 0x07e00000;   // relative to DRAM_BASE
 
 //============================================================================
@@ -72,11 +77,13 @@ static int run_linux(const std::string& payload, const std::string& dtb,
 
     const auto uart  = std::make_shared<Uart>();
     const auto clint = std::make_shared<Clint>();
+    const auto plic  = std::make_shared<Plic>();
 
     Bus bus;
     bus.map(DRAM_BASE,  DRAM_SIZE,  dram);
     bus.map(UART_BASE,  UART_SIZE,  uart);
     bus.map(CLINT_BASE, CLINT_SIZE, clint);
+    bus.map(PLIC_BASE,  PLIC_SIZE,  plic);
 
     Cpu cpu;
     cpu.connect(&bus);
@@ -89,6 +96,10 @@ static int run_linux(const std::string& payload, const std::string& dtb,
     uint64_t cycles = 0;
     while (true) {
         cpu.update_time(clint->mtime());
+        /* UART sources IRQ 10 into the PLIC; the PLIC raises SEIP when the
+         * source is enabled and above the context threshold. */
+        plic->set_irq(UART_IRQ, uart->irq());
+        cpu.set_ext_irq(plic->pending_for(S_CTX));
         cpu.run();
         cycles++;
         if (max_cycles && cycles >= max_cycles) {

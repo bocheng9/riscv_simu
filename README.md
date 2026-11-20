@@ -46,7 +46,7 @@ Exceptions and interrupts: full delegation via `medeleg`/`mideleg`,
 
 ```sh
 g++ -std=c++17 -O2 -o v3sim \
-    main.cpp cpu.cpp bus.cpp utils.cpp dev.cpp rvc.cpp
+    main.cpp cpu.cpp bus.cpp utils.cpp dev.cpp rvc.cpp plic.cpp
 ```
 
 `CMakeLists.txt` is provided as an alternative.
@@ -80,12 +80,18 @@ The boot context is set up per the OpenSBI convention: `a0 = hartid`,
 |---|---|---|---|
 | DRAM | `0x8000_0000` | 128 MB | program image, DTB, page tables |
 | CLINT | `0x0200_0000` | 64 KB | `mtimecmp` at `0x4000`, `mtime` at `0xBFF8` |
+| PLIC | `0x0C00_0000` | 64 MB | platform interrupt controller, context 1 = hart0 S-mode |
 | UART 16550A | `0x1000_0000` | 8 bytes | THR/RBR, IER, IIR/FCR, LCR, MCR, LSR, MSR, SCR |
 | DTB | `0x87E0_0000` | — | loaded from `--dtb` |
 
 The UART models the full 16550A register set. `IIR` reports "no interrupt
 pending" and `MSR` reports CTS/DSR/DCD asserted, which is what the Linux
 8250 driver expects before it will transmit user-space data.
+
+Transmission is interrupt driven: the UART asserts its interrupt request
+whenever the driver has enabled the THR-empty interrupt, and the PLIC
+forwards that to the S-mode external interrupt of the CPU. Without the
+interrupt the transmit path stalls once one FIFO of data has been written.
 
 ## Directory layout
 
@@ -95,6 +101,7 @@ cpu.h/.cpp  CPU core: fetch/decode/execute, CSR file, traps, counters
 rvc.h/.cpp  RV32C compressed instruction expansion
 bus.h/.cpp  address decoder and RAM
 dev.h/.cpp  MMIO devices: 16550A UART and CLINT
+plic.h/.cpp PLIC 1.0.0 platform interrupt controller
 utils.h/.cpp helpers for loading ELF images
 ```
 

@@ -29,9 +29,15 @@ uint32_t Uart::read(const uint32_t addr, const uint32_t /*n_bytes*/) {
         break;
     case 2:
         /* IIR: bit0=0 means an interrupt is pending.
-         * Return 0x01 = no interrupt pending.
+         * Reading IIR clears the pending THR-empty condition, which is how
+         * the driver learns it may refill the transmit FIFO.
          */
-        val = 0x01;
+        if (irq()) {
+            val = 0x02;          // THR empty interrupt pending
+            ack_tx();
+        } else {
+            val = 0x01;          // no interrupt pending
+        }
         break;
     case 3:
         val = lcr;
@@ -75,9 +81,12 @@ void Uart::write(const uint32_t addr, const uint32_t /*n_bytes*/, const uint32_t
         if (dlab) {
             dll = b;
         } else {
-            /* THR: emit to the terminal */
+            /* THR: emit to the terminal and account for FIFO occupancy */
             fputc(b, stdout);
             fflush(stdout);
+            if (tx_pending < TX_FIFO_DEPTH) {
+                tx_pending++;
+            }
         }
         break;
     case 1:

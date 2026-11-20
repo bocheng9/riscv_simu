@@ -19,21 +19,28 @@ uint32_t Uart::read(const uint32_t addr, const uint32_t /*n_bytes*/) {
         if (dlab) {
             val = dll;
         } else {
-            /* RBR: return 0 when no data is pending, and clear rx_ready */
-            val = rx_ready ? rx_byte : 0;
-            rx_ready = false;
+            /* RBR: pop the next received character, if any */
+            if (rx_count != 0) {
+                val = rx_fifo[rx_tail];
+                rx_tail = (rx_tail + 1) % RX_FIFO_DEPTH;
+                rx_count--;
+            } else {
+                val = 0;
+            }
         }
         break;
     case 1:
         val = dlab ? dlm : ier;
         break;
     case 2:
-        /* IIR: bit0=0 means an interrupt is pending.
-         * Reading IIR clears the pending THR-empty condition, which is how
-         * the driver learns it may refill the transmit FIFO.
-         */
-        if (irq()) {
-            val = 0x02;          // THR empty interrupt pending
+        /* IIR: bit0=0 means an interrupt is pending. Receive data available
+         * has the higher priority (0x04); reading IIR clears the pending
+         * THR-empty condition, which is how the driver learns it may refill
+         * the transmit FIFO. */
+        if ((ier & 0x01) != 0 && rx_count != 0) {
+            val = 0x04;          // received data available
+        } else if (irq()) {
+            val = 0x02;          // THR empty
             ack_tx();
         } else {
             val = 0x01;          // no interrupt pending
@@ -52,7 +59,7 @@ uint32_t Uart::read(const uint32_t addr, const uint32_t /*n_bytes*/) {
          *      bit0=DR (data ready)
          */
         val = 0x60;
-        if (rx_ready) val |= 0x01;
+        if (rx_count != 0) val |= 0x01;
         break;
     case 6:
         /* MSR: bit4=CTS bit5=DSR bit6=RI bit7=DCD

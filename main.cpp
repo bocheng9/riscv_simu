@@ -9,6 +9,9 @@
 #include <iostream>
 #include <string>
 #include <cstring>
+#include <cstdio>
+#include <unistd.h>
+#include <fcntl.h>
 #include "utils.h"
 #include "bus.h"
 #include "cpu.h"
@@ -26,6 +29,7 @@ static constexpr uint32_t PLIC_SIZE  = 0x4000000;
 static constexpr uint32_t UART_IRQ   = 10;        // QEMU virt: serial0 = IRQ 10
 static constexpr uint32_t S_CTX      = 1;         // PLIC context 1 = hart0 S-mode
 static constexpr uint32_t DTB_OFFSET = 0x07e00000;   // relative to DRAM_BASE
+static constexpr uint64_t STDIN_POLL_DIV = 1000;     // instructions between polls
 
 //============================================================================
 // ISA test mode
@@ -93,12 +97,29 @@ static int run_linux(const std::string& payload, const std::string& dtb,
     fprintf(stderr, "[sim] payload=%s  dtb=%s (@%08x)\n",
             payload.c_str(), dtb.c_str(), DRAM_BASE + DTB_OFFSET);
 
+    /* Make the host console non-blocking so keyboard input can be polled
+     * from the execution loop without stalling the simulation. */
+    const int stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    if (stdin_flags != -1) {
+        fcntl(STDIN_FILENO, F_SETFL, stdin_flags | O_NONBLOCK);
+    }
+
     uint64_t cycles = 0;
     while (true) {
         /* Advance mtime once every MTIME_DIV instructions so the simulated
          * clock keeps a fixed ratio to the instruction stream. */
         if (cycles % Clint::MTIME_DIV == 0) clint->tick();
         cpu.update_time(clint->mtime());
+
+        /* Poll the host console for keystrokes and feed them to the UART.
+         * The guest only sees a character once it reads RBR; the receive
+         * interrupt tells it that one is waiting. */
+        if (cycles % STDIN_POLL_DIV == 0) {
+            int ch;
+            while ((ch = getchar()) != EOF) {
+                uart->push_rx(static_cast<uint8_t>(ch));
+            }
+        }
 
         /* CLINT drives the machine timer interrupt (MTIP) only. The M-mode
          * firmware (OpenSBI) traps on it and forwards the event to S-mode by

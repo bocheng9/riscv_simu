@@ -33,9 +33,14 @@ class Uart: public Mmio {
     uint8_t dll = 0;      // divisor latch low byte
     uint8_t dlm = 0;      // divisor latch high byte
 
-    /* RX buffer (no incoming data is produced currently) */
-    bool rx_ready = false;
-    uint8_t rx_byte = 0;
+    /* RX buffer. A single holding register is not enough: the front end
+     * pushes a whole line at once, and dropping the earlier characters makes
+     * the login prompt see an empty line instead of the typed name. */
+    static constexpr unsigned RX_FIFO_DEPTH = 64;
+    uint8_t rx_fifo[RX_FIFO_DEPTH] {};
+    unsigned rx_head = 0;
+    unsigned rx_tail = 0;
+    unsigned rx_count = 0;
 
     /* TX FIFO occupancy. Characters are transmitted immediately, so the
      * occupancy returns to zero as soon as THR is written; what matters is
@@ -56,13 +61,25 @@ public:
     uint32_t read(uint32_t addr, uint32_t n_bytes) override;
     void     write(uint32_t addr, uint32_t n_bytes, uint32_t data) override;
 
-    /* Whether unread data is available (always false for now) */
-    [[nodiscard]] bool has_rx() const { return rx_ready; }
+    /* Whether unread data is available */
+    [[nodiscard]] bool has_rx() const { return rx_count != 0; }
 
     /* Interrupt request line: asserted while the THR-empty condition is
-     * latched and the driver has enabled it in IER. */
+     * latched and the driver has enabled it in IER, or while a received
+     * character is waiting and the receive interrupt is enabled. */
     [[nodiscard]] bool irq() const {
-        return (ier & 0x02) != 0 && tx_irq_latch;
+        const bool tx = (ier & 0x02) != 0 && tx_irq_latch;
+        const bool rx = (ier & 0x01) != 0 && rx_count != 0;
+        return tx || rx;
+    }
+
+    /* Push a received character (called by the front end when a key is
+     * available on the console). */
+    void push_rx(uint8_t c) {
+        if (rx_count == RX_FIFO_DEPTH) return;      // FIFO full: drop
+        rx_fifo[rx_head] = c;
+        rx_head = (rx_head + 1) % RX_FIFO_DEPTH;
+        rx_count++;
     }
 
     /* Called when the CPU acknowledges the interrupt by reading IIR */

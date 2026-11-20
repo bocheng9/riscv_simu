@@ -37,12 +37,15 @@ class Uart: public Mmio {
     bool rx_ready = false;
     uint8_t rx_byte = 0;
 
-    /* TX FIFO watermark: bytes written since the last interrupt service.
-     * The Linux 8250 driver enables the THR-empty interrupt and refills the
-     * FIFO from its ISR. Without the interrupt the transmit path stalls once
-     * the FIFO is full, which is what makes user-space output stop after
-     * exactly one FIFO of data. */
+    /* TX FIFO occupancy. Characters are transmitted immediately, so the
+     * occupancy returns to zero as soon as THR is written; what matters is
+     * the latched interrupt condition below. */
     unsigned tx_pending = 0;
+
+    /* Latched THR-empty interrupt. Set when a character is written while the
+     * THR-empty interrupt is enabled, cleared when the driver reads IIR.
+     * This mirrors the 16550 behaviour and avoids an interrupt storm. */
+    bool tx_irq_latch = false;
 
 public:
     static constexpr unsigned TX_FIFO_DEPTH = 256;
@@ -53,13 +56,14 @@ public:
     /* Whether unread data is available (always false for now) */
     [[nodiscard]] bool has_rx() const { return rx_ready; }
 
-    /* Interrupt request line, asserted while the transmitter wants service */
+    /* Interrupt request line: asserted while the THR-empty condition is
+     * latched and the driver has enabled it in IER. */
     [[nodiscard]] bool irq() const {
-        return (ier & 0x02) != 0 && tx_pending < TX_FIFO_DEPTH;
+        return (ier & 0x02) != 0 && tx_irq_latch;
     }
 
     /* Called when the CPU acknowledges the interrupt by reading IIR */
-    void ack_tx() { tx_pending = 0; }
+    void ack_tx() { tx_irq_latch = false; tx_pending = 0; }
 };
 
 /*============================================================================

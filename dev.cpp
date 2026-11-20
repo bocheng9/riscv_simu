@@ -81,17 +81,26 @@ void Uart::write(const uint32_t addr, const uint32_t /*n_bytes*/, const uint32_t
         if (dlab) {
             dll = b;
         } else {
-            /* THR: emit to the terminal and account for FIFO occupancy */
+            /* THR: emit to the terminal. Transmission is instantaneous, so
+             * the FIFO drains at once and the THR-empty condition latches. */
             fputc(b, stdout);
             fflush(stdout);
-            if (tx_pending < TX_FIFO_DEPTH) {
-                tx_pending++;
+            tx_pending = 0;
+            if ((ier & 0x02) != 0) {
+                tx_irq_latch = true;
             }
         }
         break;
     case 1:
         if (dlab) dlm = b;
-        else      ier = b;
+        else {
+            ier = b;
+            /* Enabling the interrupt while the transmitter is idle should
+             * raise a request so the driver can start feeding it. */
+            if ((ier & 0x02) != 0 && tx_pending == 0) {
+                tx_irq_latch = true;
+            }
+        }
         break;
     case 2:
         fcr = b;      // FIFO control

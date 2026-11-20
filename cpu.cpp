@@ -92,8 +92,14 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
         case 0x3bd: val = pmpaddr[13]; break;
         case 0x3be: val = pmpaddr[14]; break;
         case 0x3bf: val = pmpaddr[15]; break;
-        case 0x303:  // medeleg
+        case 0x303:  // mideleg
             val = mideleg;
+            break;
+        case 0x104:  // sie — delegated subset of mie
+            val = mie & mideleg;
+            break;
+        case 0x144:  // sip — delegated subset of mip
+            val = mip & mideleg;
             break;
         case 0x304:  // mie
             val = mie;
@@ -204,6 +210,12 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
         case 0x3bf: pmpaddr[15] = val; break;
         case 0x303:  // mideleg
             mideleg = val;
+            break;
+        case 0x104:  // sie — write only the delegated bits of mie
+            mie = (mie & ~mideleg) | (val & mideleg);
+            break;
+        case 0x144:  // sip — write only the software-writable delegated bits
+            mip = (mip & ~(mideleg & 0x222u)) | (val & mideleg & 0x222u);
             break;
         case 0x304:  // mie
             mie = val;

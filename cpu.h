@@ -125,8 +125,32 @@ public:
         }
     }
 
+    /* CLINT machine timer: drives mip.MTIP (bit 7) */
+    void set_timer_irq(bool active) {
+        if (active) {
+            mip |= (1u << 7);                  // MTIP
+        } else {
+            mip &= ~(1u << 7);
+        }
+    }
+
+    /* Supervisor timer: drives mip.STIP (bit 5) */
+    void set_stimer_irq(bool active) {
+        if (active) {
+            mip |= (1u << 5);                  // STIP
+        } else {
+            mip &= ~(1u << 5);
+        }
+    }
+
     /* Current PC (for debugging output) */
     [[nodiscard]] uint32_t get_pc() const { return pc; }
+
+    /* Debug accessors for the interrupt path */
+    [[nodiscard]] uint32_t get_mip() const { return mip; }
+    [[nodiscard]] uint32_t get_mie() const { return mie; }
+    [[nodiscard]] uint32_t get_mideleg() const { return mideleg; }
+    [[nodiscard]] uint32_t get_priv() const { return static_cast<uint32_t>(privilege); }
 
     /* Set boot context (OpenSBI convention: a0=hartid, a1=DTB physical address) */
     void set_boot_context(uint32_t hartid, uint32_t dtb_addr) {

@@ -100,12 +100,12 @@ static int run_linux(const std::string& payload, const std::string& dtb,
         if (cycles % Clint::MTIME_DIV == 0) clint->tick();
         cpu.update_time(clint->mtime());
 
-        /* CLINT compares mtime against mtimecmp and drives both the machine
-         * timer interrupt and the supervisor timer interrupt; the latter is
-         * how SBI delivers timer interrupts to S-mode. */
+        /* CLINT drives the machine timer interrupt (MTIP) only. The M-mode
+         * firmware (OpenSBI) traps on it and forwards the event to S-mode by
+         * setting STIP and re-programming mtimecmp; driving STIP directly
+         * from the CLINT would skip that handover. */
         const bool timer = clint->pending();
         cpu.set_timer_irq(timer);
-        cpu.set_stimer_irq(timer);
 
         /* UART sources IRQ 10 into the PLIC; the PLIC raises SEIP when the
          * source is enabled and above the context threshold. */

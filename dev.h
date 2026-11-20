@@ -47,6 +47,9 @@ class Uart: public Mmio {
      * This mirrors the 16550 behaviour and avoids an interrupt storm. */
     bool tx_irq_latch = false;
 
+    /* MSR delta flags: reported once after reset, then cleared */
+    bool msr_delta = true;
+
 public:
     static constexpr unsigned TX_FIFO_DEPTH = 256;
 
@@ -87,7 +90,7 @@ public:
 
 private:
     uint64_t mtime_cnt = 0;    // ticks since reset
-    uint64_t mtimecmp  = ~0ull;
+    uint64_t mtimecmp  = ~0ull; // disarmed after reset, as on real hardware
 
 public:
     Clint() = default;

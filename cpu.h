@@ -62,6 +62,12 @@ protected:
     uint32_t medeleg;
     uint32_t mideleg;
 
+    /* SSTC: S-mode timer compare. When menvcfg.STCE is set, S-mode programs
+     * the timer directly through these instead of going through SBI, and
+     * mip.STIP is driven by the mtime/stimecmp comparison. */
+    uint64_t stimecmp = ~0ull;
+    bool     stce     = false;   // menvcfg.STCE (bit 63)
+
     /* PMP (CSR storage only, no permission checks yet) */
     uint32_t pmpcfg[4]  = {0, 0, 0, 0};
     uint32_t pmpaddr[16] = {0};
@@ -112,8 +118,18 @@ protected:
 public:
     Cpu();
 
-    /* Called by CLINT every step: refresh the wall clock */
-    void update_time(uint64_t t) { mtime = t; }
+    /* Called by CLINT every step: refresh the wall clock and, when SSTC is
+     * enabled, drive mip.STIP from the stimecmp comparison. */
+    void update_time(uint64_t t) {
+        mtime = t;
+        if (stce) {
+            if (mtime >= stimecmp) {
+                mip |= (1u << 5);      // STIP
+            } else {
+                mip &= ~(1u << 5);
+            }
+        }
+    }
 
     /* External interrupt lines (UART on the virt platform).
      * drv_uart feeds the interrupt request into mip.SEIP/MEIP. */

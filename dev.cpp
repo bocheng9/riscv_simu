@@ -56,10 +56,15 @@ uint32_t Uart::read(const uint32_t addr, const uint32_t /*n_bytes*/) {
         break;
     case 6:
         /* MSR: bit4=CTS bit5=DSR bit6=RI bit7=DCD
-         *      Report the peer as always ready so the driver
-         *      completes its initialisation.
-         */
+         *      Report the peer as always ready so the driver completes its
+         *      initialisation. Bits 0-3 are the delta flags: the first read
+         *      after reset reports every line as having just changed, which
+         *      is what a freshly connected terminal does. */
         val = 0xb0;
+        if (msr_delta) {
+            val |= 0x0f;      // DCTS | DDSR | TERI | DDCD
+            msr_delta = false;
+        }
         break;
     case 7:
         val = scr;

@@ -101,6 +101,18 @@ uint32_t Cpu::read_csr(const uint16_t addr) const {
         case 0x144:  // sip — delegated subset of mip
             val = mip & mideleg;
             break;
+        case 0x14d:  // stimecmp (SSTC, low word)
+            val = static_cast<uint32_t>(stimecmp & 0xffffffff);
+            break;
+        case 0x15d:  // stimecmph (SSTC, high word)
+            val = static_cast<uint32_t>((stimecmp >> 32) & 0xffffffff);
+            break;
+        case 0x30a:  // menvcfg (low word): no bits of interest here
+            val = 0;
+            break;
+        case 0x31a:  // menvcfgh: bit31 is STCE
+            val = stce ? 0x80000000u : 0u;
+            break;
         case 0x304:  // mie
             val = mie;
             break;
@@ -217,6 +229,17 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
         case 0x144:  // sip — write only the software-writable delegated bits
             mip = (mip & ~(mideleg & 0x222u)) | (val & mideleg & 0x222u);
             break;
+        case 0x14d:  // stimecmp (SSTC, low word)
+            stimecmp = (stimecmp & 0xffffffff00000000ull) | val;
+            break;
+        case 0x15d:  // stimecmph (SSTC, high word)
+            stimecmp = (static_cast<uint64_t>(val) << 32) | (stimecmp & 0xffffffff);
+            break;
+        case 0x30a:  // menvcfg (low word)
+            break;
+        case 0x31a:  // menvcfgh: bit31 enables SSTC
+            stce = (val & 0x80000000u) != 0;
+            break;
         case 0x304:  // mie
             mie = val;
             break;
@@ -236,7 +259,15 @@ void Cpu::write_csr(const uint16_t addr, const uint32_t val) {
             mtval = val;
             break;
         case 0x344:  // mip
-            mip = val;
+            /* Only the software-writable interrupt bits may be changed from
+             * software. MSIP (3), STIP (5) and SSIP (1) are writable; MTIP,
+             * MEIP, SEIP and the rest are driven by the hardware and must
+             * keep their current value. Writing the whole register would let
+             * a stray write clear a pending timer or external interrupt. */
+            {
+                constexpr uint32_t MIP_SW_MASK = (1u << 1) | (1u << 3) | (1u << 5);
+                mip = (mip & ~MIP_SW_MASK) | (val & MIP_SW_MASK);
+            }
             break;
         // ---- Counters (writable; OpenSBI initialises them) ----
         case 0xb00: mcycle = val; break;
@@ -460,14 +491,31 @@ void Cpu::execute() {
     {
         const uint32_t pending = mip & mie;
         if (pending != 0) {
-            uint32_t cause = 0;
-            for (uint32_t b = 0; b < 32; b++) {
-                if (pending & (1u << b)) { cause = b; break; }
+            /* RISC-V defines a fixed priority order for interrupts:
+             *   MEI > MSI > MTI > SEI > SSI > STI
+             * Picking the lowest set bit instead would let a level-triggered
+             * timer preempt the serial interrupt indefinitely, which starves
+             * the console. */
+            static constexpr uint32_t INTERRUPT_PRIORITY[] = {
+                11,  // MEI
+                 3,  // MSI
+                 7,  // MTI
+                 9,  // SEI
+                 1,  // SSI
+                 5,  // STI
+            };
+
+            uint32_t cause = 32;
+            for (const uint32_t c : INTERRUPT_PRIORITY) {
+                if (pending & (1u << c)) { cause = c; break; }
             }
-            bool take = false;
-            if (privilege <= 1 && mstatus.bits.sie && ((mideleg >> cause) & 1)) take = true;
-            if (privilege == 3 && mstatus.bits.mie) take = true;
-            if (take) throw Trap(0x80000000u | cause, 0);
+
+            if (cause != 32) {
+                bool take = false;
+                if (privilege < 3 && mstatus.bits.sie && ((mideleg >> cause) & 1)) take = true;
+                if (privilege == 3 && mstatus.bits.mie) take = true;
+                if (take) throw Trap(0x80000000u | cause, 0);
+            }
         }
     }
 

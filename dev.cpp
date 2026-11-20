@@ -126,26 +126,12 @@ void Uart::write(const uint32_t addr, const uint32_t /*n_bytes*/, const uint32_t
 /*============================================================================
  * Clint
  *============================================================================*/
-Clint::Clint() {
-    host_start_ns = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-}
-
-uint64_t Clint::mtime() const {
-    const uint64_t now = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-    const uint64_t ticks = (now - host_start_ns) / 100;   // 10MHz
-    return mtime_base + ticks;
-}
-
 uint32_t Clint::read(const uint32_t addr, const uint32_t /*n_bytes*/) {
     if (addr == 0xbff8) {
-        return static_cast<uint32_t>(mtime() & 0xffffffff);
+        return static_cast<uint32_t>(mtime_cnt & 0xffffffff);
     }
     if (addr == 0xbffc) {
-        return static_cast<uint32_t>((mtime() >> 32) & 0xffffffff);
+        return static_cast<uint32_t>((mtime_cnt >> 32) & 0xffffffff);
     }
     if (addr == 0x4000) {
         return static_cast<uint32_t>(mtimecmp & 0xffffffff);
@@ -157,18 +143,10 @@ uint32_t Clint::read(const uint32_t addr, const uint32_t /*n_bytes*/) {
 }
 
 void Clint::write(const uint32_t addr, const uint32_t /*n_bytes*/, const uint32_t data) {
-    const auto now_ns = [] {
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
-    };
-
     if (addr == 0xbff8) {
-        mtime_base = (mtime_base & 0xffffffff00000000ull) | data;
-        host_start_ns = now_ns();
+        mtime_cnt = (mtime_cnt & 0xffffffff00000000ull) | data;
     } else if (addr == 0xbffc) {
-        mtime_base = (static_cast<uint64_t>(data) << 32) | (mtime_base & 0xffffffff);
-        host_start_ns = now_ns();
+        mtime_cnt = (static_cast<uint64_t>(data) << 32) | (mtime_cnt & 0xffffffff);
     } else if (addr == 0x4000) {
         mtimecmp = (mtimecmp & 0xffffffff00000000ull) | data;
     } else if (addr == 0x4004) {

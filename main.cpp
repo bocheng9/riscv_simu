@@ -95,6 +95,9 @@ static int run_linux(const std::string& payload, const std::string& dtb,
 
     uint64_t cycles = 0;
     while (true) {
+        /* Advance mtime once every MTIME_DIV instructions so the simulated
+         * clock keeps a fixed ratio to the instruction stream. */
+        if (cycles % Clint::MTIME_DIV == 0) clint->tick();
         cpu.update_time(clint->mtime());
 
         /* CLINT compares mtime against mtimecmp and drives both the machine

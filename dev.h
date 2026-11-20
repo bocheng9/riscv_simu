@@ -72,18 +72,32 @@ public:
  *   0x4004 mtimecmp_h
  *   0xBFF8 mtime     (64-bit, low/high words)
  *   0xBFFC mtime_h
+ *
+ * mtime advances with the simulated instruction count rather than wall-clock
+ * time. Tying it to host time makes the clock advance by a few million ticks
+ * per simulated second while the model retires hundreds of millions of
+ * instructions, so timer interrupts either never arrive or arrive in bursts.
+ * One tick per MTIME_DIV instructions keeps the ratio fixed and the clock
+ * monotonic.
  *============================================================================*/
 class Clint: public Mmio {
-    uint64_t mtime_base    = 0;
-    uint64_t host_start_ns = 0;
-    uint64_t mtimecmp      = ~0ull;
+public:
+    /* Instructions per mtime tick (CPU 100MHz / timer 10MHz) */
+    static constexpr uint64_t MTIME_DIV = 10;
+
+private:
+    uint64_t mtime_cnt = 0;    // ticks since reset
+    uint64_t mtimecmp  = ~0ull;
 
 public:
-    Clint();
+    Clint() = default;
 
-    [[nodiscard]] uint64_t mtime() const;
-    [[nodiscard]] bool pending() const { return mtime() >= mtimecmp; }
-    void clear_pending() { mtimecmp = ~0ull; }
+    [[nodiscard]] uint64_t mtime() const { return mtime_cnt; }
+
+    /* Advance the clock by one tick (called every MTIME_DIV instructions) */
+    void tick() { mtime_cnt++; }
+
+    [[nodiscard]] bool pending() const { return mtime_cnt >= mtimecmp; }
 
     uint32_t read(uint32_t addr, uint32_t n_bytes) override;
     void     write(uint32_t addr, uint32_t n_bytes, uint32_t data) override;
